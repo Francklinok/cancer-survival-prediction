@@ -603,9 +603,6 @@ def group_effect_analysis(
             plt.tight_layout()
             plt.show()
 
-    print("\n  → For formal group comparison tests: statistical_analysis.compare_groups()")
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # 9. RESIDUAL ANOMALY DETECTION (VISUAL)
 # ──────────────────────────────────────────────────────────────────────────────
