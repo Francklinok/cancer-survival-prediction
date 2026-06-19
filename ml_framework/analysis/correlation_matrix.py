@@ -27,7 +27,8 @@ from ml_framework.visualization.analysis.correlation_plots import (
     plot_correlation_methods_comparison,
     plot_vif_chart,
 )
-from ml_framework.visualization.base import section_header
+from ml_framework.utils.display_utils import section_header
+from ml_framework.utils.statistical_utils import compute_vif_matrix
 
 logger = logging.getLogger("ml_framework.correlation")
 
@@ -216,46 +217,30 @@ def compute_vif(df: pd.DataFrame, columns: Optional[list] = None) -> pd.DataFram
     VIF > 5  → moderate multicollinearity
     VIF > 10 → high multicollinearity — candidate for removal
 
+    Delegates to statistical_utils.compute_vif_matrix for the computation.
+
     Returns
     -------
     pd.DataFrame with columns: feature, VIF
     """
-    from sklearn.linear_model import LinearRegression
+    vif_df = compute_vif_matrix(df, columns=columns, threshold=5.0)
 
-    numeric_df = df.select_dtypes(include=[np.number]).dropna()
-    if columns:
-        numeric_df = numeric_df[[c for c in columns if c in numeric_df.columns]]
-
-    if numeric_df.shape[1] < 2:
+    if vif_df.empty:
         logger.warning("VIF requires at least 2 numeric columns.")
         return pd.DataFrame()
 
-    vif_data = []
-    cols = numeric_df.columns.tolist()
-
-    for i, col in enumerate(cols):
-        X = numeric_df.drop(columns=[col]).values
-        y = numeric_df[col].values
-
-        try:
-            r_sq = LinearRegression().fit(X, y).score(X, y)
-            vif = 1 / (1 - r_sq) if r_sq < 1.0 else float("inf")
-        except Exception:
-            vif = float("nan")
-
-        vif_data.append({"feature": col, "VIF": round(float(vif), 4)})
-
-    vif_df = pd.DataFrame(vif_data).sort_values("VIF", ascending=False)
+    # Rename to keep backward-compat column name 'VIF' (uppercase)
+    vif_df = vif_df.rename(columns={"vif": "VIF"})[["feature", "VIF"]]
 
     plot_vif_chart(vif_df)
 
     high_vif = vif_df[vif_df["VIF"] > 10]["feature"].tolist()
     mod_vif  = vif_df[(vif_df["VIF"] > 5) & (vif_df["VIF"] <= 10)]["feature"].tolist()
     if high_vif:
-        print(f"\n  ⚠️  High multicollinearity (VIF>10)    : {high_vif}")
-        print("      → Consider removal or PCA/regularization.")
+        print(f"\n  High multicollinearity (VIF>10)    : {high_vif}")
+        print("      -> Consider removal or PCA/regularization.")
     if mod_vif:
-        print(f"  ⚠️  Moderate multicollinearity (VIF 5-10): {mod_vif}")
+        print(f"  Moderate multicollinearity (VIF 5-10): {mod_vif}")
 
     return vif_df
 

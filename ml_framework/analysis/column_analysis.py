@@ -10,7 +10,10 @@ Tests applied per column
 ------------------------
 1. Shapiro-Wilk        — best power for n ≤ 5 000; stratified sample above that
 2. Anderson-Darling    — tail-sensitive; replaces KS2-sample against a simulated normal
-3. One-sample KS       — compares empirical CDF to N(μ, σ)
+3. Lilliefors          — KS test corrected for estimated µ/σ (Lilliefors 1967).
+                         Raw KS with estimated parameters is anti-conservative and
+                         MUST NOT be used here. Falls back to raw KS with warning
+                         if statsmodels is not installed.
 
 Normality score (0–1)
 ---------------------
@@ -158,15 +161,30 @@ def analyze_column_properties(
         except Exception:
             pass
 
-        # ── 3. One-sample KS vs N(μ, σ) ──────────────────────────────────────
+        # ── 3. Lilliefors test (KS corrected for estimated parameters) ──────────
+        # Standardizing by empirical (µ̂, σ̂) then calling kstest("norm") is
+        # anti-conservative: the null distribution assumes KNOWN parameters, so
+        # the p-value is systematically inflated. Lilliefors (1967) provides the
+        # correct critical values for the case where µ and σ are estimated.
         ks_stat = ks_p = np.nan
         ks_pass = False
         if std_val > 0:
             try:
-                ks_stat, ks_p = kstest((serie.values - mean_val) / std_val, "norm")
+                from statsmodels.stats.diagnostic import lilliefors as _lilliefors
+                ks_stat, ks_p = _lilliefors(serie.values, dist="norm", pvalmethod="approx")
                 ks_pass = float(ks_p) > alpha
             except Exception:
-                pass
+                # statsmodels unavailable — fall back to raw KS with prominent caveat
+                try:
+                    ks_stat, ks_p = kstest((serie.values - mean_val) / std_val, "norm")
+                    ks_pass = float(ks_p) > alpha
+                    logger.warning(
+                        "Column '%s': using raw KS (anti-conservative) — "
+                        "install statsmodels for Lilliefors correction.",
+                        col,
+                    )
+                except Exception:
+                    pass
 
         # ── Normality score (0–1) ─────────────────────────────────────────────
         base_score = (int(sw_pass) + int(ad_pass) + int(ks_pass)) / 3.0
@@ -288,7 +306,7 @@ def _print_analysis(df: pd.DataFrame, alpha: float = 0.05) -> None:
     W = 90
     print("\n" + "═" * W)
     print("  STATISTICAL ANALYSIS OF NUMERIC COLUMNS")
-    print(f"  α = {alpha} | Tests: Shapiro-Wilk + Anderson-Darling + one-sample KS")
+    print(f"  α = {alpha} | Tests: Shapiro-Wilk + Anderson-Darling + Lilliefors")
     print(f"  Score ≥ 0.75 → Normal | 0.40–0.75 → Borderline | < 0.40 → Non-normal")
     print("═" * W)
 
