@@ -1089,6 +1089,7 @@ def check_columns_types_legacy(df: pd.DataFrame):
     """
     Backward compatibility: returns (numerical_cols, continue_cols, discret_cols,
     categorical_cols, binary_cols, ordinals_cols).
+    
     """
     result = check_columns_types(df)
     return (
