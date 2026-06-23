@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from ml_framework.diagnostic.data_diagnostic import leakage_exploration
 logger = logging.getLogger("ml_framework.data_profiling")
 
 # ── Global constants ──────────────────────────────────────────────────────────
@@ -130,9 +131,11 @@ def check_columns_types(
     ]
 
     result = {
-        "numerical_cols":        numerical_cols,
-        "continuous_cols":       continuous_cols,
-        "discrete_cols":         discrete_cols,
+        "numerical_cols": {
+             "continuous_cols":       continuous_cols,
+             "discrete_cols":         discrete_cols if discrete_cols else [],
+        } ,
+       
         "categorical_cols":      categorical_cols,
         "binary_cols":           binary_cols,
         "ordinal_cols":          ordinal_cols,
@@ -468,48 +471,7 @@ def _detect_date_issues(series: pd.Series) -> Dict:
 
     return result
 
-
-def _detect_leakage(
-    series: pd.Series,
-    col_name: str,
-    target_col: Optional[str] = None,
-) -> Dict:
-    """
-    Detect data leakage signals:
-    - Column name contains a target keyword
-    - Derived/post-processing column prefix
-    - Numeric column with all values in [0,1] → potential predicted probabilities
-    """
-    result = {"leakage_risk": "none", "reason": ""}
-
-    col_lower = col_name.lower()
-
-    # 1. Suspicious name (target keyword, but not the target itself)
-    if target_col and col_name != target_col:
-        if any(kw in col_lower for kw in _LEAKAGE_TARGET_KEYWORDS):
-            result["leakage_risk"] = "high"
-            result["reason"] = (
-                f"Column name '{col_name}' contains a target keyword "
-                f"({[kw for kw in _LEAKAGE_TARGET_KEYWORDS if kw in col_lower]})"
-            )
-            return result
-
-    # 2. Derived / post-imputation flag (common prefixes)
-    derived_prefixes = ["flag_", "target_", "leak_", "encoded_", "pred_", "proba_"]
-    if any(col_lower.startswith(p) for p in derived_prefixes):
-        result["leakage_risk"] = "medium"
-        result["reason"] = f"Suspicious prefix indicating a post-processing column: '{col_name}'"
-        return result
-
-    # 3. Values in [0, 1] with many unique values → likely predicted probabilities
-    if pd.api.types.is_numeric_dtype(series):
-        s = series.dropna()
-        if len(s) > 10 and s.between(0, 1).all() and s.nunique() > 10:
-            result["leakage_risk"] = "medium"
-            result["reason"] = "Numeric column with values in [0,1] → potential predicted probabilities"
-
-    return result
-
+_detect_leakage = leakage_exploration
 
 def _detect_cardinality_reduction(series: pd.Series) -> Dict:
     """
@@ -545,8 +507,6 @@ def full_quality_report(
     target_col: Optional[str] = None,
 ) -> pd.DataFrame:
     """
-    Production-grade per-column quality audit (12 axes).
-
     Distinct role from ``dataset_overview``:
 
     * ``dataset_overview``    — wide exploration table with full percentile
@@ -732,8 +692,8 @@ def full_quality_report(
 
         # ── 11. Leakage detection ─────────────────────────────────────────────
         leak = _detect_leakage(series, col, target_col)
-        row["leakage_risk"]   = leak["leakage_risk"]
-        row["leakage_reason"] = leak["reason"]
+        row["leakage_risk"]   = leak.get("leakage_risk")
+        row["leakage_reason"] = leak.get("reason")
 
         rows.append({"column": col, **row})
 
@@ -789,18 +749,18 @@ def compute_quality_score(
     Compute a global dataset quality score (0 → 100).
 
     Penalties (total 100 pts):
-      Average NaN             → −20 pts max
-      Constant columns        → −10 pts max
-      Zero variance           → −10 pts max
-      Duplicate rows          → −10 pts max
-      Duplicate columns       → −5  pts max
-      High cardinality        → −5  pts max
-      Outliers > 5%           → −5  pts max
-      Invalid values          → −10 pts max
-      Inconsistent values     → −5  pts max
-      Rare categories         → −5  pts max
-      Dirty strings           → −5  pts max
-      Leakage                 → −10 pts max
+      Average NaN             → 20 pts max
+      Constant columns        → 10 pts max
+      Zero variance           → 10 pts max
+      Duplicate rows          → 10 pts max
+      Duplicate columns       → 5  pts max
+      High cardinality        → 5  pts max
+      Outliers > 5%           → 5  pts max
+      Invalid values          → 10 pts max
+      Inconsistent values     → 5  pts max
+      Rare categories         → 5  pts max
+      Dirty strings           → 5  pts max
+      Leakage                 → 10 pts max
     """
     if report_df is None:
         report_df = full_quality_report(df)
@@ -936,9 +896,9 @@ def print_profiling_summary(
         ("Identifier columns",        "id_cols"),
         ("High-cardinality columns",  "high_cardinality_cols"),
     ]:
-        print(f"║  {label:<40} {len(col_roles[key])}")
-
-    score_bar = "[" + "█" * round(quality["score"] / 10) + "░" * (10 - round(quality["score"] / 10)) + "]"
+        # print(f"║  {label:<40} {len(col_roles[key])}")
+        # 
+        score_bar = "[" + "█" * round(quality["score"] / 10) + "░" * (10 - round(quality["score"] / 10)) + "]"
     print("╠" + "═" * W + "╣")
     print(f"║  {'Global quality score':<40} {quality['score']}/100  {score_bar}")
     print(f"║  {'Grade':<40} {quality['grade']}")
@@ -952,7 +912,7 @@ def print_profiling_summary(
         print(f"║    {label:<32} {val:5.1f} pts  {bar}{marker}")
 
     sections = [
-        ("NaN (top 5)",            "missing_pct",             lambda r: r > 0,       "pct"),
+        ("NaN (top 5)",            "missing_pct",              lambda r: r > 0,       "pct"),
         ("Invalid values",         "has_invalid_values",       lambda r: r,           "flag"),
         ("Inconsistent values",    "has_inconsistent_values",  lambda r: r,           "flag"),
         ("Rare categories",        "has_rare_categories",      lambda r: r,           "flag"),
@@ -1032,7 +992,8 @@ def print_profiling_summary(
             continue
         max_pct = vc.max()
         min_pct = vc.min()
-        ratio   = max_pct / max(min_pct, 0.1)
+       
+        ratio   = max_pct / min_pct if min_pct > 0 else float("inf")
         dist_str = " / ".join([f"{v:.1f}%" for v in vc.values])
         if ratio < 1.5:
             findings.append({

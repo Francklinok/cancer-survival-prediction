@@ -57,7 +57,7 @@ def analyze_column_properties(
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
-    Complete statistical analysis of each numeric column.
+    Statistical analysis of each numeric column.
 
     Parameters
     ----------
