@@ -55,36 +55,27 @@ from ml_framework.visualization.analysis.bivariate_plots import (
     plot_categorical_vs_categorical,
 )
 
-from ml_framework.visualization.base import section_header
+from ml_framework.utils.display_utils import section_header
+from ml_framework.utils.statistical_utils import cramers_v_from_series
+from ml_framework.utils.column_utils import get_numeric_columns, get_categorical_columns
 
 logger = logging.getLogger("ml_framework.eda")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# INTERNAL HELPERS
+# INTERNAL HELPERS (thin wrappers kept for backward compat within module)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _cramers_v(x: pd.Series, y: pd.Series) -> float:
-    """Cramér's V — association strength between two categorical series (0–1)."""
-    ct = pd.crosstab(x, y)
-    chi2, _, _, _ = chi2_contingency(ct)
-    n = ct.sum().sum()
-    k = min(ct.shape) - 1
-    return float(np.sqrt(chi2 / (n * k))) if n > 0 and k > 0 else 0.0
+    return cramers_v_from_series(x, y)
 
 
 def _num_cols(df: pd.DataFrame, exclude: Optional[str] = None) -> List[str]:
-    return [
-        c for c in df.select_dtypes(include=[np.number]).columns
-        if c != exclude and df[c].nunique() > 2
-    ]
+    return get_numeric_columns(df, exclude=[exclude] if exclude else None)
 
 
 def _cat_cols(df: pd.DataFrame, exclude: Optional[str] = None) -> List[str]:
-    return [
-        c for c in df.select_dtypes(include=["object", "category"]).columns
-        if c != exclude
-    ]
+    return get_categorical_columns(df, exclude=[exclude] if exclude else None)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 1. NUMERIC DISTRIBUTIONS
@@ -355,9 +346,9 @@ def pattern_anomaly_analysis(
         zero_pct  = (s == 0).sum() / n * 100
         zero_flag = zero_pct > 30 and s.nunique() > 2
 
-        # Bimodality heuristic: kurtosis < -0.5 and |skew| < 0.3
         ku = float(stats.kurtosis(s))
         sk = float(stats.skew(s))
+        
         bimodal_flag = ku < -0.5 and abs(sk) < 0.3
 
         records.append({
