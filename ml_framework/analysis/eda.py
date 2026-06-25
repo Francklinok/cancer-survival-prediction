@@ -348,7 +348,7 @@ def pattern_anomaly_analysis(
 
         ku = float(stats.kurtosis(s))
         sk = float(stats.skew(s))
-        
+
         bimodal_flag = ku < -0.5 and abs(sk) < 0.3
 
         records.append({
@@ -756,5 +756,5 @@ def run_eda(
             logger.error("Error at step '%s': %s", step, e, exc_info=True)
 
     print("\n" + "═" * 64)
-    print("     for formal hypothesis tests, effect sizes, and VIF.")
+    print(" for formal hypothesis tests, effect sizes, and VIF.")
     print("═" * 64 + "\n")
