@@ -9,10 +9,12 @@ Structure
 ---------
   1.  Normality testing               → normality_tests()
   2.  Group comparison                → compare_groups()
-        - t-test (2 groups, normal data)
-        - Mann-Whitney U (non-parametric, 2 groups)
-        - One-way ANOVA (3+ groups, normal data)
-        - Kruskal-Wallis (non-parametric, 3+ groups)
+        - Student t-test  (2 groups, normal, equal var)
+        - Welch t-test    (2 groups, normal, unequal var)
+        - Mann-Whitney U  (non-parametric, 2 groups)
+        - One-way ANOVA   (3+ groups, normal, equal var)
+        - Welch ANOVA     (3+ groups, normal, unequal var) ← via alexandergovern
+        - Kruskal-Wallis  (non-parametric, 3+ groups)
   3.  Numeric correlation             → correlation_analysis()
         - Pearson (linear, normal data)
         - Spearman (monotonic, robust)
@@ -56,6 +58,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 from scipy.stats import (
+    alexandergovern,
     anderson,
     chi2_contingency,
     f_oneway,
@@ -69,21 +72,33 @@ from scipy.stats import (
     ttest_ind,
 )
 
-from ml_framework.visualization.base import section_header
+from ml_framework.utils.display_utils import section_header
+from ml_framework.utils.statistical_utils import (
+    classify_effect_magnitude,
+    compute_cohens_d,
+    compute_cohens_d as _cohens_d,
+    compute_cramers_v,
+    compute_cramers_v_bc,
+    compute_eta_squared,
+    compute_omega_squared,
+    compute_rank_biserial,
+    compute_vif_matrix,
+    significance_stars as _stars,
+    all_groups_parametric,
+    choose_group_test,
+    corr_with_ci,
+    is_parametric_appropriate as _is_normal,
+)
+from ml_framework.analysis.column_analysis import analyze_column_properties
+
+
 
 logger = logging.getLogger("ml_framework.statistical_analysis")
 
-# Significance stars helper
-def _stars(p: float) -> str:
-    if p < 0.001: return "***"
-    if p < 0.01:  return "**"
-    if p < 0.05:  return "*"
-    return "ns"
 
-
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # 1. NORMALITY TESTING
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
 def normality_tests(
     df: pd.DataFrame,
@@ -134,7 +149,6 @@ def normality_tests(
         normality_score, normality_verdict,
         recommendation
     """
-    from ml_framework.analysis.column_analysis import analyze_column_properties
 
     if columns is None:
         columns = [
@@ -192,9 +206,9 @@ def normality_tests(
     return result
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # 2. GROUP COMPARISON TESTS
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
 def compare_groups(
     df: pd.DataFrame,
@@ -209,13 +223,24 @@ def compare_groups(
 
     Decision logic (per feature)
     ----------------------------
-    2 groups + normal data  → Welch t-test (equal_var=False by default)
-    2 groups + non-normal   → Mann-Whitney U
-    3+ groups + normal      → One-way ANOVA
-    3+ groups + non-normal  → Kruskal-Wallis
+    2 groups + all normal + equal var   → Student t-test
+    2 groups + all normal + unequal var → Welch t-test          (default)
+    2 groups + non-normal               → Mann-Whitney U
+    3+ groups + all normal + equal var  → One-way ANOVA
+    3+ groups + all normal + unequal    → Welch ANOVA            (new)
+    3+ groups + non-normal              → Kruskal-Wallis
 
-    Normality is assessed with Shapiro-Wilk on each group (n ≤ 5 000).
-    For large groups the CLT applies and t-test / ANOVA are robust regardless.
+    Normality is assessed with a composite score (Shapiro-Wilk + Anderson-Darling
+    + skewness + kurtosis) via all_groups_parametric().
+
+    Statistical note on CLT
+    -----------------------
+    The CLT guarantees that *test statistics* (t, F) converge in distribution
+    under large n. It does NOT imply that the *data* are Gaussian. Income data
+    with n=100 000 is still log-normal. Treating large-n as a free pass to
+    parametric tests ignores distributional shape and leads to biased effect
+    size estimates (Cohen's d on skewed data, for example). This module does
+    not apply any such shortcut — normality is assessed on the data itself.
 
     Multiple-testing correction
     ---------------------------
@@ -248,23 +273,10 @@ def compare_groups(
     if group_col not in df.columns:
         raise ValueError(f"Group column '{group_col}' not found.")
 
-    groups_vals = df[group_col].dropna().unique()
+    groups_vals = sorted(df[group_col].dropna().unique(), key=str)
     n_groups    = len(groups_vals)
-
     print(f"  Groups ({n_groups}): {list(groups_vals)}")
     print(f"  Bonferroni correction: {'ON' if bonferroni else 'OFF'} | α = {alpha}\n")
-
-    # Helper: is a group approximately normal?
-    def _is_normal(arr: np.ndarray, a: float) -> bool:
-        if len(arr) < 3:
-            return False
-        if len(arr) > 5_000:
-            return True  # CLT applies
-        try:
-            _, p = shapiro(arr[:5_000])
-            return p > a
-        except Exception:
-            return False
 
     rows = []
     p_raws = []
@@ -282,7 +294,7 @@ def compare_groups(
         if len(group_arrays) < 2:
             continue
 
-        all_normal = all(_is_normal(g, alpha) for g in group_arrays)
+        test_name, _ = choose_group_test(group_arrays, alpha=alpha)
 
         stat     = np.nan
         p_raw    = np.nan
@@ -291,45 +303,54 @@ def compare_groups(
         effect_size_type = ""
 
         try:
-            if n_groups == 2:
+            if test_name == "student_t":
                 a, b = group_arrays[0], group_arrays[1]
-                if all_normal:
-                    stat, p_raw = ttest_ind(a, b, equal_var=equal_var)
-                    test_used   = "Welch t-test" if not equal_var else "Student t-test"
-                    # Cohen's d
-                    pooled_std = np.sqrt(
-                        ((len(a) - 1) * a.std()**2 + (len(b) - 1) * b.std()**2)
-                        / (len(a) + len(b) - 2)
-                    )
-                    effect_size      = abs(a.mean() - b.mean()) / pooled_std if pooled_std > 0 else 0
-                    effect_size_type = "Cohen's d"
-                else:
-                    stat, p_raw = mannwhitneyu(a, b, alternative="two-sided")
-                    test_used   = "Mann-Whitney U"
-                    # Rank-biserial correlation as effect size
-                    n1, n2 = len(a), len(b)
-                    effect_size      = 1 - (2 * stat) / (n1 * n2)
-                    effect_size_type = "rank-biserial r"
+                stat, p_raw      = ttest_ind(a, b, equal_var=True)
+                test_used        = "Student t-test"
+                effect_size      = abs(compute_cohens_d(a, b, variant="pooled"))
+                effect_size_type = "Cohen's d"
 
-            else:  # 3+ groups
-                if all_normal:
-                    stat, p_raw = f_oneway(*group_arrays)
-                    test_used   = "One-way ANOVA"
-                    n_tot = sum(len(g) for g in group_arrays)
-                    k     = len(group_arrays)
-                    # η² from F-stat
-                    effect_size      = (stat * (k - 1)) / (stat * (k - 1) + (n_tot - k))
-                    effect_size_type = "η² (ANOVA)"
-                else:
-                    stat, p_raw = kruskal(*group_arrays)
-                    test_used   = "Kruskal-Wallis"
-                    n_tot = sum(len(g) for g in group_arrays)
-                    k     = len(group_arrays)
-                    effect_size      = max(0.0, (stat - k + 1) / (n_tot - k))
-                    effect_size_type = "η² (KW)"
+            elif test_name == "welch_t":
+                a, b = group_arrays[0], group_arrays[1]
+                stat, p_raw      = ttest_ind(a, b, equal_var=False)
+                test_used        = "Welch t-test"
+                effect_size      = abs(compute_cohens_d(a, b, variant="glass"))
+                effect_size_type = "Glass Δ"
+
+            elif test_name == "mann_whitney":
+                a, b = group_arrays[0], group_arrays[1]
+                stat, p_raw      = mannwhitneyu(a, b, alternative="two-sided")
+                test_used        = "Mann-Whitney U"
+                effect_size      = compute_rank_biserial(stat, len(a), len(b))
+                effect_size_type = "rank-biserial r"
+
+            elif test_name == "anova":
+                n_tot = sum(len(g) for g in group_arrays)
+                k     = len(group_arrays)
+                stat, p_raw      = f_oneway(*group_arrays)
+                test_used        = "One-way ANOVA"
+                effect_size      = compute_omega_squared(stat, n_tot, k, test_type="anova")
+                effect_size_type = "ω² (ANOVA)"
+
+            elif test_name == "welch_anova":
+                n_tot = sum(len(g) for g in group_arrays)
+                k     = len(group_arrays)
+                result_ag        = alexandergovern(*group_arrays)
+                stat, p_raw      = float(result_ag.statistic), float(result_ag.pvalue)
+                test_used        = "Welch ANOVA"
+                effect_size      = compute_eta_squared(stat, n_tot, k, test_type="anova")
+                effect_size_type = "η² (anova)"
+
+            elif test_name == "kruskal":
+                n_tot = sum(len(g) for g in group_arrays)
+                k     = len(group_arrays)
+                stat, p_raw      = kruskal(*group_arrays)
+                test_used        = "Kruskal-Wallis"
+                effect_size      = compute_eta_squared(stat, n_tot, k, test_type="kruskal")
+                effect_size_type = "η² (kw)" 
 
         except Exception as exc:
-            logger.warning("Test failed for '%s': %s", col, exc)
+            logger.warning("Test failed for '%s' (test=%s): %s", col, test_name, exc)
             continue
 
         p_raws.append(p_raw)
@@ -339,7 +360,7 @@ def compare_groups(
             "test_used":        test_used,
             "statistic":        round(float(stat), 4),
             "p_raw":            round(float(p_raw), 6),
-            "p_corrected":      None,  # filled after Bonferroni
+            "p_corrected":      None,  
             "significant":      None,
             "effect_size":      round(float(effect_size), 4),
             "effect_size_type": effect_size_type,
@@ -353,7 +374,6 @@ def compare_groups(
 
     result_df = pd.DataFrame(rows)
 
-    # Bonferroni correction
     if bonferroni and len(p_raws) > 1:
         p_corrected = np.minimum(np.array(p_raws) * len(p_raws), 1.0)
     else:
@@ -366,7 +386,6 @@ def compare_groups(
     )
     result_df = result_df.sort_values("p_corrected")
 
-    # Print results
     W = 90
     print(f"  {'Feature':<25} {'Test':<18} {'Stat':>8} {'p_raw':>9} "
           f"{'p_adj':>9} {'Sig':>4} {'Effect':>8} {'Magnitude':<12}")
@@ -388,20 +407,7 @@ def compare_groups(
 
 
 def _effect_magnitude(effect_type: str, value: float) -> str:
-    """Convert effect size value to magnitude label."""
-    if pd.isna(value):
-        return "—"
-    v = abs(value)
-    if "Cohen" in effect_type or "rank" in effect_type:
-        if v < 0.2:  return "negligible"
-        if v < 0.5:  return "small"
-        if v < 0.8:  return "medium"
-        return "large"
-    else:  # η²
-        if v < 0.01: return "negligible"
-        if v < 0.06: return "small"
-        if v < 0.14: return "medium"
-        return "large"
+    return classify_effect_magnitude(value, effect_type)
 
 
 def _interpret_group_test(row: pd.Series, alpha: float) -> str:
@@ -414,9 +420,9 @@ def _interpret_group_test(row: pd.Series, alpha: float) -> str:
     )
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # 3. NUMERIC CORRELATION ANALYSIS
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
 def correlation_analysis(
     df: pd.DataFrame,
@@ -462,47 +468,33 @@ def correlation_analysis(
         ]
 
     def _corr_pair(x: pd.Series, y: pd.Series, meth: str) -> Tuple[float, float, float, float]:
-        """Returns (r, p, ci_low, ci_high)."""
-        common = x.notna() & y.notna()
-        xv, yv = x[common].values, y[common].values
-        n = len(xv)
-        if n < 5:
-            return np.nan, np.nan, np.nan, np.nan
+        return corr_with_ci(x, y, method=meth)
 
-        if meth == "pearson":
-            r, p = pearsonr(xv, yv)
-        else:
-            r, p = spearmanr(xv, yv)
-
-        # Fisher z-transform for CI
-        if abs(r) < 1 and n > 3:
-            z  = np.arctanh(r)
-            se = 1 / np.sqrt(n - 3)
-            ci_low  = float(np.tanh(z - 1.96 * se))
-            ci_high = float(np.tanh(z + 1.96 * se))
-        else:
-            ci_low = ci_high = float(r)
-
-        return float(r), float(p), ci_low, ci_high
+    _normality_cache: Dict[str, bool] = {}
+    def _col_is_normal(col: str) -> bool:
+        if col not in _normality_cache:
+            vals = df[col].dropna().values.astype(float)
+            _normality_cache[col] = _is_normal(vals, alpha=alpha)
+        return _normality_cache[col]
 
     def _auto_method(col1: str, col2: str) -> str:
-        """Choose Pearson vs Spearman based on normality."""
-        n = min(len(df[col1].dropna()), len(df[col2].dropna()), 5_000)
-        if n < 3:
-            return "spearman"
-        if n > 5_000:
-            return "pearson"  # CLT applies
-        try:
-            _, p1 = shapiro(df[col1].dropna().sample(min(n, 5_000), random_state=42))
-            _, p2 = shapiro(df[col2].dropna().sample(min(n, 5_000), random_state=42))
-            return "pearson" if (p1 > alpha and p2 > alpha) else "spearman"
-        except Exception:
-            return "spearman"
+        if _col_is_normal(col1) and _col_is_normal(col2):
+            return "pearson"
+        return "spearman"
 
     pairs = []
     if target_col and target_col in df.columns:
-        pairs = [(col, target_col) for col in columns if col != target_col]
-    else:
+        if not pd.api.types.is_numeric_dtype(df[target_col]):
+            print(
+                f"  NOTE: target_col '{target_col}' is categorical — excluded from Pearson/Spearman.\n"
+                f"  → Use categorical_association_tests() for cat×cat associations,\n"
+                f"    or root_cause_analysis() / diagnostic_analysis() for num×cat effect sizes.\n"
+            )
+            target_col = None
+        else:
+            pairs = [(col, target_col) for col in columns if col != target_col]
+
+    if not pairs:
         pairs = [(c1, c2) for c1, c2 in combinations(columns, 2)]
 
     rows = []
@@ -534,7 +526,6 @@ def correlation_analysis(
         .reset_index(drop=True)
     )
 
-    # Print noteworthy pairs
     noteworthy = result[result["r"].abs() >= threshold]
     print(f"  {'Var1':<25} {'Var2':<25} {'Method':<9} {'r':>7} {'p':>9} {'Sig':>4} {'95% CI':<18} {'Magnitude'}")
     print("  " + "─" * 105)
@@ -545,18 +536,23 @@ def correlation_analysis(
               f"{r['r']:>7.4f} {r['p_value']:>9.4f} {sig:>4} {ci:<18} {r['magnitude']}")
 
     n_sig = result["significant"].sum()
-    print(f"\n  Total pairs: {len(result)} | Significant (p<{alpha}): {n_sig} | "
+    n_pairs = len(result)
+    print(f"\n  Total pairs: {n_pairs} | Significant (p<{alpha}): {n_sig} | "
           f"|r|≥{threshold}: {len(noteworthy)}")
+    if n_pairs > 1:
+        expected_fp = round(n_pairs * alpha, 1)
+        print(
+            f"  ⚠  No multiple-testing correction applied across {n_pairs} pairs."
+            f" At α={alpha}, ~{expected_fp} false positive(s) expected by chance."
+            f" Apply Bonferroni: α_adj = {alpha/n_pairs:.5f}, or use correlation_analysis()"
+            f" after feature_association_tests() (which applies Bonferroni)."
+        )
 
     return result
 
 
 def _corr_magnitude(r_abs: float) -> str:
-    if r_abs < 0.10: return "negligible"
-    if r_abs < 0.30: return "weak"
-    if r_abs < 0.50: return "moderate"
-    if r_abs < 0.70: return "strong"
-    return "very strong"
+    return classify_effect_magnitude(r_abs, "pearson")
 
 
 def _interpret_corr(r: float, p: float, alpha: float, c1: str, c2: str, method: str) -> str:
@@ -566,9 +562,9 @@ def _interpret_corr(r: float, p: float, alpha: float, c1: str, c2: str, method: 
     return f"{method.capitalize()} {direction} {mag} correlation between '{c1}' and '{c2}' — {sig_txt}"
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # 4. CATEGORICAL ASSOCIATION TESTS
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
 def categorical_association_tests(
     df: pd.DataFrame,
@@ -586,8 +582,12 @@ def categorical_association_tests(
     - Expected frequency ≥ 5 in all cells (checked automatically)
     - If violated: Fisher's exact test is used for 2×2, warning for larger
 
-    Effect size: Cramér's V
-    -----------------------
+    Effect size: Cramér's V (bias-corrected, Bergsma 2013)
+    -------------------------------------------------------
+    The classic Cramér's V overestimates effect size on small samples because
+    chi² > 0 even under H₀. The bias-corrected version (V_bc) is used here.
+    V_bc ≈ V for n ≥ 200 but is more accurate for smaller contingency tables.
+
     V = 0.0–0.1  → negligible
     V = 0.1–0.3  → weak
     V = 0.3–0.5  → moderate
@@ -627,9 +627,9 @@ def categorical_association_tests(
             ct           = pd.crosstab(df[c1].dropna(), df[c2].dropna())
             chi2_val, p, dof, expected = chi2_contingency(ct)
             assume_ok    = bool((expected >= min_expected).all())
-            n            = ct.sum().sum()
-            k            = min(ct.shape) - 1
-            cramers_v    = float(np.sqrt(chi2_val / (n * k))) if n > 0 and k > 0 else 0.0
+            n            = int(ct.sum().sum())
+            n_rows, n_cols = ct.shape
+            cramers_v    = compute_cramers_v_bc(chi2_val, n, n_rows, n_cols)
 
             p_raws.append(p)
             rows.append({
@@ -691,10 +691,7 @@ def categorical_association_tests(
 
 
 def _cramers_magnitude(v: float) -> str:
-    if v < 0.10: return "negligible"
-    if v < 0.30: return "weak"
-    if v < 0.50: return "moderate"
-    return "strong"
+    return classify_effect_magnitude(v, "cramers_v")
 
 
 def _interpret_chi2(row: pd.Series, alpha: float) -> str:
@@ -707,9 +704,9 @@ def _interpret_chi2(row: pd.Series, alpha: float) -> str:
     )
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # 5. VARIANCE ANALYSIS
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
 def variance_analysis(
     df: pd.DataFrame,
@@ -825,9 +822,9 @@ def variance_analysis(
     return result
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # 6. MULTICOLLINEARITY — VIF
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
 def multicollinearity_analysis(
     df: pd.DataFrame,
@@ -870,56 +867,44 @@ def multicollinearity_analysis(
             if df[c].nunique() > 2
         ]
 
-    # Drop columns with zero variance
     valid_cols = [c for c in feature_cols
                   if c in df.columns and df[c].dropna().std() > 1e-8]
     X = df[valid_cols].dropna()
+    n_dropped = len(df) - len(X)
+    if n_dropped > 0:
+        pct_dropped = n_dropped / len(df) * 100
+        msg = f"VIF/correlation: {n_dropped} rows ({pct_dropped:.1f}%) dropped (listwise deletion)."
+        if pct_dropped > 20:
+            logger.warning(
+                "%s If missing data is MNAR, VIF estimates may be biased. "
+                "Consider imputing before calling multicollinearity_analysis().", msg
+            )
+        else:
+            logger.info("%s", msg)
 
     if len(valid_cols) < 2:
         print("  Not enough valid columns for multicollinearity analysis.")
         return pd.DataFrame(), pd.DataFrame()
 
-    # ── VIF computation ───────────────────────────────────────────────────────
     try:
-        from numpy.linalg import lstsq
-        vif_rows = []
-        X_arr = X.values.astype(float)
-        for i, col in enumerate(valid_cols):
-            y_vif = X_arr[:, i]
-            X_vif = np.delete(X_arr, i, axis=1)
-            # Add intercept
-            X_vif = np.hstack([np.ones((len(X_vif), 1)), X_vif])
-            coeffs, _, _, _ = lstsq(X_vif, y_vif, rcond=None)
-            y_hat = X_vif @ coeffs
-            ss_res = ((y_vif - y_hat) ** 2).sum()
-            ss_tot = ((y_vif - y_vif.mean()) ** 2).sum()
-            r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
-            vif = 1 / (1 - r2) if r2 < 1.0 else float("inf")
-            vif_rows.append({
-                "feature":   col,
-                "vif":       round(vif, 3),
-                "r2_others": round(r2, 4),
-                "severity":  _vif_severity(vif, vif_threshold),
-            })
-        vif_df = pd.DataFrame(vif_rows).sort_values("vif", ascending=False)
+        vif_df = compute_vif_matrix(X, columns=valid_cols, threshold=vif_threshold)
+        vif_df = vif_df.rename(columns={"vif": "vif", "severity": "severity"})
     except Exception as exc:
         logger.warning("VIF computation failed: %s", exc)
         vif_df = pd.DataFrame()
 
-    # Print VIF
     print(f"  VIF threshold: {vif_threshold} | Features: {len(valid_cols)}\n")
     print(f"  {'Feature':<30} {'VIF':>8} {'R²(others)':>11} {'Severity'}")
     print("  " + "─" * 58)
     for _, r in vif_df.iterrows():
-        flag = "⚠️ HIGH" if r["vif"] >= vif_threshold else ""
+        flag = " HIGH" if r["vif"] >= vif_threshold else ""
         print(f"  {r['feature']:<30} {r['vif']:>8.2f} {r['r2_others']:>11.4f}  {r['severity']} {flag}")
 
     n_high = (vif_df["vif"] >= vif_threshold).sum()
     if n_high:
-        print(f"\n  ⚠️  {n_high} feature(s) with VIF ≥ {vif_threshold} — multicollinearity risk.")
+        print(f"\n {n_high} feature(s) with VIF ≥ {vif_threshold} — multicollinearity risk.")
         print("     → Remove one from each collinear pair, or apply PCA / Ridge regression.")
 
-    # ── High-correlation pairs with p-values ──────────────────────────────────
     print(f"\n  High-correlation pairs (|r| ≥ {corr_threshold}, Pearson + p-value):\n")
     corr_rows = []
     for c1, c2 in combinations(valid_cols, 2):
@@ -948,21 +933,14 @@ def multicollinearity_analysis(
                   f"{r['p_value']:>9.4f} {sig:>4} {r['action']}")
     else:
         high_corr_df = pd.DataFrame()
-        print(f"  ✅ No pairs with |r| ≥ {corr_threshold}")
+        print(f" No pairs with |r| ≥ {corr_threshold}")
 
     return vif_df, high_corr_df
 
 
-def _vif_severity(vif: float, threshold: float) -> str:
-    if vif < 1.5:            return "none"
-    if vif < threshold:      return "moderate"
-    if vif < threshold * 2:  return "high"
-    return "severe"
-
-
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # 7. EFFECT SIZES
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
 def effect_size_analysis(
     df: pd.DataFrame,
@@ -1031,40 +1009,37 @@ def effect_size_analysis(
                 df.loc[df[group_col] == g, col].dropna().values
                 for g in groups_vals
             ]
-            group_arrays = [g for g in group_arrays if len(g) >= 3]
+            group_arrays = [g for g in group_arrays if len(g) >= 5]
             if len(group_arrays) < 2:
                 continue
 
             try:
                 if n_groups == 2:
                     a, b = group_arrays[0], group_arrays[1]
-                    pooled = np.sqrt(
-                        ((len(a) - 1) * a.std()**2 + (len(b) - 1) * b.std()**2)
-                        / (len(a) + len(b) - 2)
-                    )
-                    d = abs(a.mean() - b.mean()) / pooled if pooled > 0 else 0.0
                     t, p = ttest_ind(a, b, equal_var=False)
+                    # pooled d for uniform ranking; compare_groups() switches to Glass Δ when variances differ
+                    d = abs(compute_cohens_d(a, b, variant="pooled"))
                     rows.append({
-                        "feature":       col,
-                        "effect_type":   "Cohen's d",
-                        "effect_size":   round(d, 4),
-                        "magnitude":     _effect_magnitude("Cohen's d", d),
-                        "test_stat":     round(float(t), 4),
-                        "p_value":       round(float(p), 6),
+                        "feature":        col,
+                        "effect_type":    "Cohen's d (pooled)",
+                        "effect_size":    round(d, 4),
+                        "magnitude":      _effect_magnitude("cohens_d", d),
+                        "test_stat":      round(float(t), 4),
+                        "p_value":        round(float(p), 6),
                         "interpretation": _d_interpret(d, col, str(groups_vals[0]), str(groups_vals[1])),
                     })
                 else:
-                    h, p = kruskal(*group_arrays)
+                    h, p  = kruskal(*group_arrays)
                     n_tot = sum(len(g) for g in group_arrays)
                     k     = len(group_arrays)
-                    eta2  = max(0.0, (h - k + 1) / (n_tot - k))
+                    eta2  = compute_eta_squared(h, n_tot, k, test_type="kruskal")
                     rows.append({
-                        "feature":       col,
-                        "effect_type":   "η² (eta-squared)",
-                        "effect_size":   round(eta2, 4),
-                        "magnitude":     _effect_magnitude("η²", eta2),
-                        "test_stat":     round(float(h), 4),
-                        "p_value":       round(float(p), 6),
+                        "feature":        col,
+                        "effect_type":    "η² (KW)",
+                        "effect_size":    round(eta2, 4),
+                        "magnitude":      _effect_magnitude("eta_squared", eta2),
+                        "test_stat":      round(float(h), 4),
+                        "p_value":        round(float(p), 6),
                         "interpretation": _eta2_interpret(eta2, col),
                     })
             except Exception as exc:
@@ -1074,17 +1049,17 @@ def effect_size_analysis(
             try:
                 ct = pd.crosstab(df[col], df[group_col])
                 chi2_val, p, _, _ = chi2_contingency(ct)
-                n = ct.sum().sum()
-                k = min(ct.shape) - 1
-                v = float(np.sqrt(chi2_val / (n * k))) if n > 0 and k > 0 else 0.0
+                n = int(ct.sum().sum())
+                n_rows_ct, n_cols_ct = ct.shape
+                v = compute_cramers_v_bc(chi2_val, n, n_rows_ct, n_cols_ct)
                 rows.append({
-                    "feature":       col,
-                    "effect_type":   "Cramér's V",
-                    "effect_size":   round(v, 4),
-                    "magnitude":     _cramers_magnitude(v),
-                    "test_stat":     round(float(chi2_val), 4),
-                    "p_value":       round(float(p), 6),
-                    "interpretation": f"Cramér's V={v:.3f} ({_cramers_magnitude(v)}) between '{col}' and '{group_col}'",
+                    "feature":        col,
+                    "effect_type":    "Cramér's V (bc)",
+                    "effect_size":    round(v, 4),
+                    "magnitude":      _cramers_magnitude(v),
+                    "test_stat":      round(float(chi2_val), 4),
+                    "p_value":        round(float(p), 6),
+                    "interpretation": f"Cramér's V_bc={v:.3f} ({_cramers_magnitude(v)}) between '{col}' and '{group_col}'",
                 })
             except Exception as exc:
                 logger.warning("Cramér's V failed for '%s': %s", col, exc)
@@ -1114,7 +1089,7 @@ def effect_size_analysis(
 
 
 def _d_interpret(d: float, col: str, g1: str, g2: str) -> str:
-    mag = _effect_magnitude("Cohen's d", d)
+    mag = _effect_magnitude("cohens_d", d)
     return f"Cohen's d={d:.3f} ({mag}) — '{col}' differs between '{g1}' and '{g2}'"
 
 
@@ -1123,9 +1098,9 @@ def _eta2_interpret(eta2: float, col: str) -> str:
     return f"η²={eta2:.3f} ({mag}) — group membership explains {eta2*100:.1f}% of '{col}' variance"
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # 8. UNIFIED FEATURE ASSOCIATION TESTS
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
 def feature_association_tests(
     df: pd.DataFrame,
@@ -1159,6 +1134,8 @@ def feature_association_tests(
     if feature_cols is None:
         feature_cols = [c for c in df.columns if c != target_col]
 
+    # nunique <= 15 treats low-cardinality numerics as categorical (e.g. score scales).
+    # Verify target type if the column sits near this boundary.
     is_cat_tgt = (
         not pd.api.types.is_numeric_dtype(df[target_col])
         or df[target_col].nunique() <= 15
@@ -1187,34 +1164,34 @@ def feature_association_tests(
                     df.loc[df[target_col] == g, col].dropna().values
                     for g in df[target_col].dropna().unique()
                 ]
-                groups = [g for g in groups if len(g) >= 3]
+                groups = [g for g in groups if len(g) >= 5]
                 if len(groups) >= 2:
-                    h, p = kruskal(*groups)
+                    h, p  = kruskal(*groups)
                     n_tot = sum(len(g) for g in groups)
                     k     = len(groups)
-                    eta2  = max(0.0, (h - k + 1) / (n_tot - k))
+                    eta2  = compute_eta_squared(h, n_tot, k, test_type="kruskal")
                     stat, effect, test_used, effect_type = h, eta2, "Kruskal-Wallis", "η²"
 
             elif not is_num_feat and is_cat_tgt:
                 ct = pd.crosstab(df[col].dropna(), df[target_col].dropna())
                 chi2_val, p, _, _ = chi2_contingency(ct)
-                n = ct.sum().sum()
-                k = min(ct.shape) - 1
-                v = float(np.sqrt(chi2_val / (n * k))) if n > 0 and k > 0 else 0.0
-                stat, effect, test_used, effect_type = chi2_val, v, "Chi-square", "Cramér's V"
+                n = int(ct.sum().sum())
+                n_r, n_c = ct.shape
+                v = compute_cramers_v_bc(chi2_val, n, n_r, n_c)
+                stat, effect, test_used, effect_type = chi2_val, v, "Chi-square", "Cramér's V (bc)"
 
             else:
                 groups = [
                     df.loc[df[col] == g, target_col].dropna().values
                     for g in df[col].dropna().unique()
                 ]
-                groups = [g for g in groups if len(g) >= 3]
+                groups = [g for g in groups if len(g) >= 5]
                 if len(groups) >= 2:
-                    h, p = kruskal(*groups)
+                    h, p  = kruskal(*groups)
                     n_tot = sum(len(g) for g in groups)
                     k     = len(groups)
-                    eta2  = max(0.0, (h - k + 1) / (n_tot - k))
-                    stat, effect, test_used, effect_type = h, eta2, "KW (cat→num)", "η²"
+                    eta2  = compute_eta_squared(h, n_tot, k, test_type="kruskal")
+                    stat, effect, test_used, effect_type = h, eta2, "KW (cat->num)", "η²"
 
             if not pd.isna(p):
                 p_raws.append(p)
@@ -1267,9 +1244,9 @@ def feature_association_tests(
     return result
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # 9. FULL ORCHESTRATOR
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
 def run_statistical_analysis(
     df: pd.DataFrame,
