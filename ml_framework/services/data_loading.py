@@ -14,17 +14,16 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from typing import Any, Dict
 
 logger = logging.getLogger("ml_framework.data_loading")
 
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # MAIN FUNCTION
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
 def load_data(
     file_path: str | os.PathLike,
@@ -87,7 +86,6 @@ def load_data(
 
     logger.info("Loading file: %s", path.name)
 
-    # ── Load by format ────────────────────────────────────────────────────────
     try:
         if suffix == ".csv":
             df = _load_csv(path, encoding, sep)
@@ -100,14 +98,11 @@ def load_data(
     except Exception as exc:
         raise ValueError(f"Error loading '{path.name}': {exc}") from exc
 
-    # ── Basic safety cleanup ──────────────────────────────────────────────────
     df = _basic_cleanup(df)
 
-    # ── Validation ────────────────────────────────────────────────────────────
     if validate:
         _validate(df, target_column=target_column, min_rows=min_rows)
 
-    # ── Protect the raw data ──────────────────────────────────────────────────
     df_raw = df.copy(deep=True)
     df_work = df.copy(deep=True)
 
@@ -118,9 +113,9 @@ def load_data(
     )
     return df_raw, df_work
 
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # INTERNAL HELPERS
-# ──────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
 def _load_csv(
     path: Path,
