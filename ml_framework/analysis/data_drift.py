@@ -499,9 +499,15 @@ def detect_target_drift(
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
         if is_numeric:
-            axes[0].hist(y_reference.dropna(), bins=30, alpha=0.6,
+            # Shared bin edges (computed once from the pooled data) so both
+            # histograms are directly comparable — independent binning per
+            # series can misalign bar positions/widths between the two.
+            shared_bins = np.histogram_bin_edges(
+                pd.concat([y_reference.dropna(), y_current.dropna()]), bins=30
+            )
+            axes[0].hist(y_reference.dropna(), bins=shared_bins, alpha=0.6,
                          color="steelblue", label="Reference", density=True)
-            axes[0].hist(y_current.dropna(),   bins=30, alpha=0.6,
+            axes[0].hist(y_current.dropna(),   bins=shared_bins, alpha=0.6,
                          color="darkorange", label="Current", density=True)
             axes[0].set_title("Target Distribution", fontsize=10)
             axes[0].legend()
@@ -944,8 +950,13 @@ def monitor_population_stability(
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots(figsize=(max(8, len(pivot.columns) * 1.5),
                                         max(5, len(pivot) * 0.4 + 1)))
+        # vmax floor of 0.30 keeps the color scale meaningful when all PSI
+        # values are stable; it never clips — severe drift above 0.30 simply
+        # extends the scale instead of saturating at the "significant" color.
+        finite_vals = pivot.values[~np.isnan(pivot.values)]
+        vmax = max(0.30, float(finite_vals.max())) if finite_vals.size else 0.30
         im = ax.imshow(pivot.values, aspect="auto", cmap="RdYlGn_r",
-                       vmin=0, vmax=0.30)
+                       vmin=0, vmax=vmax)
         ax.set_xticks(range(len(pivot.columns)))
         ax.set_xticklabels(pivot.columns, rotation=45, ha="right")
         ax.set_yticks(range(len(pivot.index)))
