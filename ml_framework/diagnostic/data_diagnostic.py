@@ -46,6 +46,7 @@ def leakage_exploration(
     proba_score:   int = 2,
     high_threshold:   int = 4,
     medium_threshold: int = 2,
+    plot_leakage: bool = False,
 ) -> pd.DataFrame:
     """
     Heuristic leakage suspicion scoring — visual risk map output.
@@ -61,6 +62,9 @@ def leakage_exploration(
     Returns scored DataFrame + leakage risk bar chart.
     This is heuristic suspicion only — not proof of leakage.
     """
+
+    if  isinstance(df, pd.Series):
+        df = df.to_frame()
     section_header(f"LEAKAGE SUSPICION SCORING — target: {target_col}")
 
     if target_col not in df.columns:
@@ -95,9 +99,16 @@ def leakage_exploration(
 
         if pd.api.types.is_numeric_dtype(df[col]) and not is_cat_tgt:
             try:
-                mask = df[col].notna()
+                # Pairwise deletion: include only rows where BOTH col and target are non-null.
+                # fillna(0) before pearsonr would distort the correlation coefficient —
+                # zeros are not a neutral imputation for Pearson (they shift the mean
+                # and compress variance), potentially producing r values that reflect
+                # imputation artifacts rather than true feature-target association.
+                mask = df[col].notna() & df[target_col].notna()
+                if mask.sum() < 10:
+                    continue
                 r, _ = stats.pearsonr(df.loc[mask, col], df.loc[mask, target_col])
-                if abs(r) > 0.95:
+                if abs(r) > 0.85: 
                     score += corr_score
                     signals.append(f"Pearson r={r:+.3f} (+{corr_score})")
             except Exception:
@@ -105,9 +116,9 @@ def leakage_exploration(
 
         if pd.api.types.is_object_dtype(df[col]) and is_cat_tgt:
             try:
-                mask = df[col].notna()
+                mask = df[col].notna() & df[target_col].notna()
                 cv   = _cramers_v(df.loc[mask, col], df.loc[mask, target_col])
-                if cv > 0.95:
+                if cv > 0.85:  
                     score += cramers_score
                     signals.append(f"Cramér's V={cv:.3f} (+{cramers_score})")
             except Exception:
@@ -148,7 +159,7 @@ def leakage_exploration(
         .sort_values("score", ascending=False)
     )
 
-    for tier, icon in [("HIGH", "🔴"), ("MEDIUM", "🟡"), ("LOW", "🔵")]:
+    for tier, icon in [("HIGH", "1"), ("MEDIUM", "2"), ("LOW", "3")]:
         subset = leak_df[leak_df["risk"] == tier]
         if subset.empty:
             continue
@@ -159,10 +170,10 @@ def leakage_exploration(
 
     print(
         "\n   NOTE: Heuristic suspicion only — validate against domain knowledge.\n"
-        "          Rule: leakage = information unavailable at prediction time.\n"
+        "     Rule: leakage = information unavailable at prediction time.\n"
     )
-
-    plot_leakage_risk(leak_df)
+    if plot_leakage:
+        plot_leakage_risk(leak_df)
     return leak_df
 
 
@@ -238,9 +249,11 @@ def feature_importance_exploration(
                     h, _ = stats.kruskal(*groups)
                     n_tot = sum(len(g) for g in groups)
                     k     = len(groups)
-                    eta2  = max(0.0, (h - k + 1) / (n_tot - k))
+                    # Calculate Epsilon-squared using (n-1) as the denominator per Tomczak & Tomczak (2014).
+                    # Note: Distinct from Eta-squared, which uses (n-k).
+                    eta2  = max(0.0, (h - k + 1) / (n_tot - 1))
                     assoc[col] = eta2
-                    metric_type[col] = "KW η²"
+                    metric_type[col] = "KW ε²"
             else:
                 r, _ = stats.pearsonr(df[col].fillna(0), df[target_col].fillna(0))
                 assoc[col] = abs(r)
