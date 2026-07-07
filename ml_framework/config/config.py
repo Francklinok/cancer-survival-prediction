@@ -140,6 +140,9 @@ class DataConfig:
     contamination: float = 0.05
     max_missing_ratio: float = 0.50         # columns with > 50% NaN → dropped
     min_variance: float = 1e-8              # minimum variance to retain a column
+    id_columns: List[str] = field(          # identifier columns dropped during cleaning
+        default_factory=lambda: ["PatientID"]
+    )
 
 
 @dataclass

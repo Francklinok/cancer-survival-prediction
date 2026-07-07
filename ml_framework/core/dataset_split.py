@@ -124,12 +124,22 @@ def split_train_test(
     strat_arr = y if stratify and y.nunique() <= 20 else None
 
     # First split: train+val vs test
-    X_trainval, X_test, y_trainval, y_test = train_test_split(
-        X, y,
-        test_size=test_size,
-        stratify=strat_arr,
-        random_state=random_state,
-    )
+    try:
+        X_trainval, X_test, y_trainval, y_test = train_test_split(
+            X, y,
+            test_size=test_size,
+            stratify=strat_arr,
+            random_state=random_state,
+        )
+    except ValueError:
+        # Stratification can fail (e.g. a class with too few members) —
+        # fall back to an unstratified split rather than raising.
+        logger.warning("Stratified split failed — falling back to unstratified split.")
+        X_trainval, X_test, y_trainval, y_test = train_test_split(
+            X, y,
+            test_size=test_size,
+            random_state=random_state,
+        )
 
     if val_size == 0.0:
         logger.info(
