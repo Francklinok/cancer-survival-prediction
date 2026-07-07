@@ -510,13 +510,13 @@ def full_quality_report(
     Distinct role from ``dataset_overview``:
 
     * ``dataset_overview``    — wide exploration table with full percentile
-      ladder; best for notebook display and quick inspection.
+      ladder.
     * ``full_quality_report`` — tall audit table (one row per column) covering
       12 quality axes: type conversion, missing values, duplicates, zero
       variance, cardinality, inconsistencies, rare categories, invalid values,
       string issues, date issues, leakage, and numeric stats.  Numeric stats
       are computed **once** via ``_build_num_stats_cache`` and reused here
-      — no double computation with ``dataset_overview``.
+     ``.
 
     Parameters
     ----------
@@ -551,6 +551,15 @@ def full_quality_report(
                 pass
 
     n_duplicate_rows = int(df.duplicated().sum())
+
+    # Leakage suspicion scored once for the whole DataFrame (leakage_exploration
+    # is not designed to be called per-column).
+    leak_df: Optional[pd.DataFrame] = None
+    if target_col and target_col in df.columns:
+        try:
+            leak_df = _detect_leakage(df, target_col)
+        except Exception:
+            leak_df = None
 
     rows = []
     for col in all_cols:
@@ -620,7 +629,7 @@ def full_quality_report(
         # ── 1. Type conversion ────────────────────────────────────────────────
         row["suggested_type"] = _detect_type_conversion(series)
 
-        # ── 4 + 12. Zero variance & numeric stats (read from cache) ─────────────
+        # Zero variance & numeric stats (read from cache) ─────────────
         if is_numeric:
             stats = num_cache.get(col, {})
             row["zero_variance"]  = stats.get("zero_variance",  True)
@@ -691,9 +700,14 @@ def full_quality_report(
                 row["date_issue_details"] = " | ".join(date_details)
 
         # ── 11. Leakage detection ─────────────────────────────────────────────
-        leak = _detect_leakage(series, col, target_col)
-        row["leakage_risk"]   = leak.get("leakage_risk")
-        row["leakage_reason"] = leak.get("reason")
+        # leak_df is scored once for the whole DataFrame (see above); a column
+        # absent from it (e.g. the target column itself) simply gets no verdict.
+        if leak_df is not None and col in leak_df.index:
+            row["leakage_risk"]   = leak_df.loc[col, "risk"]
+            row["leakage_reason"] = leak_df.loc[col, "interpretation"]
+        else:
+            row["leakage_risk"]   = None
+            row["leakage_reason"] = None
 
         rows.append({"column": col, **row})
 
@@ -723,7 +737,8 @@ def _log_quality_alerts(report_df: pd.DataFrame, n_duplicate_rows: int) -> None:
         (int(report_df["has_invalid_values"].sum()),       f"{int(report_df['has_invalid_values'].sum())} column(s) with invalid values"),
         (int(report_df["needs_string_cleaning"].sum()),    f"{int(report_df['needs_string_cleaning'].sum())} column(s) needing string cleanup"),
         (int(report_df["has_date_issues"].sum()),          f"{int(report_df['has_date_issues'].sum())} column(s) with date issues"),
-        ((report_df["leakage_risk"] != "none").sum(),      f"{(report_df['leakage_risk'] != 'none').sum()} column(s) with leakage risk"),
+        (int(report_df["leakage_risk"].isin(["MEDIUM", "HIGH"]).sum()),
+         f"{int(report_df['leakage_risk'].isin(['MEDIUM', 'HIGH']).sum())} column(s) with leakage risk"),
         (int(report_df["is_high_cardinality"].sum()),      f"{int(report_df['is_high_cardinality'].sum())} high-cardinality column(s)"),
     ]
 
@@ -842,10 +857,9 @@ def print_profiling_summary(
     The function:
       1. Prints the full profiling banner (dimensions, types, score, penalties, alerts)
       2. Computes and prints a **Key Observations** table (kurtosis, class balance,
-         missing values, outliers, IDs) — the facts that feed the conclusion
+         missing values, outliers, IDs) 
       3. Returns a ``pd.DataFrame`` with columns:
            | Category | Column(s) | Observation | Implication |
-         ready to display directly in a notebook cell.
 
     Pass ``report_df`` and/or ``quality`` if they were already computed upstream
     (e.g. after calling ``full_quality_report`` and ``compute_quality_score`` in
@@ -917,7 +931,7 @@ def print_profiling_summary(
         ("Inconsistent values",    "has_inconsistent_values",  lambda r: r,           "flag"),
         ("Rare categories",        "has_rare_categories",      lambda r: r,           "flag"),
         ("Strings to clean",       "needs_string_cleaning",    lambda r: r,           "flag"),
-        ("Leakage risk",           "leakage_risk",             lambda r: r != "none", "raw"),
+        ("Leakage risk",           "leakage_risk",             lambda r: r in ("MEDIUM", "HIGH"), "raw"),
         ("IDs to exclude from ML", "is_id_col",                lambda r: r,           "id"),
         ("Duplicate columns",      "is_duplicate_col",         lambda r: r,           "dup"),
     ]
@@ -943,7 +957,7 @@ def print_profiling_summary(
 
     print("╚" + "═" * W + "╝\n")
 
-    # ── Key Observations (the facts that feed the conclusion) ─────────────────
+    # ── Key Observations  ─────────────────
     findings: List[Dict] = []
 
     # 1. Kurtosis on numeric columns

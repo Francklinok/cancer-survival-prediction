@@ -541,6 +541,13 @@ def group_effect_analysis(
 
     # ── 2. Mean ± 95% CI bar chart ────────────────────────────────────────────
     if num_features:
+        if len(num_features) > 3:
+            logger.info(
+                "group_effect_analysis: Mean±CI panel shows only the first 3 of "
+                "%d selected numeric features (%s) — see the KDE/heatmap panels "
+                "above for the full set.",
+                len(num_features), num_features[:3],
+            )
         group_stats = (
             df.groupby(target_col)[num_features]
             .agg(["mean", "std", "count"])
@@ -583,6 +590,12 @@ def group_effect_analysis(
 
     # ── 4. Stacked bar for categorical features ────────────────────────────────
     if cat_features:
+        if len(cat_features) > 4:
+            logger.info(
+                "group_effect_analysis: showing stacked-bar charts for only the "
+                "first 4 of %d selected categorical features (%s).",
+                len(cat_features), cat_features[:4],
+            )
         for col in cat_features[:4]:
             ct = pd.crosstab(df[target_col], df[col], normalize="index") * 100
             ct.plot(kind="bar", stacked=True, figsize=(8, 4),
@@ -614,7 +627,7 @@ def residual_anomaly_analysis(
     Parameters
     ----------
     df            : DataFrame
-    reference_col : numeric column used as the X axis (e.g. time, age, index)
+    reference_col : numeric column used as the X axis 
     feature_cols  : columns to residualize (all numeric if None)
     n_cols        : subplot columns
     """
