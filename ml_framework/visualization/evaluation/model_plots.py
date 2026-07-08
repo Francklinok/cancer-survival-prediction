@@ -47,7 +47,7 @@ def plot_confusion_matrix(
     """
     cm = confusion_matrix(y_test, y_pred)
     labels = class_names or list(np.unique(y_test))
-   
+
     row_sums = cm.sum(axis=1, keepdims=True)
     if np.any(row_sums == 0):
         logger.warning(
@@ -169,7 +169,7 @@ def plot_score_distribution(y_proba: np.ndarray, y_test) -> None:
     """
     df_vis = pd.DataFrame({"score": y_proba, "class": y_test})
     plt.figure(figsize=(9, 5))
-   .
+  
     bin_edges = np.histogram_bin_edges(df_vis["score"], bins=30)
     for cls in sorted(df_vis["class"].unique()):
         subset = df_vis[df_vis["class"] == cls]["score"]
