@@ -289,8 +289,18 @@ def interpret_model_with_shap(
             shap_matrix = raw
             shap_list   = None
     else:
-        shap_matrix = np.asarray(shap_values, dtype=float)
-        shap_list   = None
+        # Newer shap versions have TreeExplainer.shap_values() return a bare
+        # ndarray shaped (n_samples, n_features, n_classes) for multiclass/
+        # binary classifiers, instead of the old list[n_classes] or an
+        # Explanation object — treating it as already-2D silently corrupted
+        # the feature axis (mean over samples instead of over classes).
+        raw = np.asarray(shap_values, dtype=float)
+        if raw.ndim == 3:
+            shap_matrix = np.mean(np.abs(raw), axis=2)
+            shap_list   = [raw[:, :, i] for i in range(raw.shape[2])]
+        else:
+            shap_matrix = raw
+            shap_list   = None
 
     # Align column count in case _to_numeric dropped some features
     n_feat = len(shap_feat_names)
@@ -299,21 +309,20 @@ def interpret_model_with_shap(
         if shap_list:
             shap_list = [sv[:, :n_feat] for sv in shap_list]
 
-    mean_abs   = np.abs(shap_matrix).mean(axis=0)
-    sorted_idx = np.argsort(mean_abs)[::-1][:max_display]
-    top_feats  = [shap_feat_names[i] for i in sorted_idx if i < len(shap_feat_names)]
-    top_vals   = mean_abs[sorted_idx[:len(top_feats)]]
-
-    plt.figure(figsize=(10, max(4, len(top_feats) * 0.4)))
-    plt.barh(top_feats[::-1], top_vals[::-1], color="steelblue")
-    plt.xlabel("mean |SHAP value|")
-    plt.title(f"Global SHAP importance — top {max_display} features (all classes)")
-    plt.tight_layout()
-    plt.show()
-
     class_labels = getattr(model, "classes_", None)
     X_plot = pd.DataFrame(X_shap.values if hasattr(X_shap, "values") else X_shap,
                           columns=shap_feat_names)
+
+    # Delegate to plot_shap_summary rather than hand-rolling a duplicate
+    # bar/beeswarm implementation here — keeps figsize/plot_size and any
+    # future styling improvements in one place instead of two divergent copies.
+    try:
+        plot_shap_summary(
+            shap_matrix, X_plot, shap_feat_names,
+            max_display=max_display, plot_type="bar",
+        )
+    except Exception as exc:
+        logger.warning("Global SHAP bar plot failed: %s", exc)
 
     if shap_list is not None:
         for cls_idx, sv_cls in enumerate(shap_list):
@@ -322,30 +331,19 @@ def interpret_model_with_shap(
                         else f"Class {cls_idx}")
             try:
                 sv_plot = sv_cls[:, :n_feat]
-                plt.figure(figsize=(10, 6))
-                shap.summary_plot(
-                    sv_plot, X_plot,
-                    feature_names=shap_feat_names,
-                    max_display=max_display,
-                    show=False,
+                plot_shap_summary(
+                    sv_plot, X_plot, shap_feat_names,
+                    max_display=max_display, plot_type="summary",
+                    title_suffix=f" — {cls_name}",
                 )
-                plt.title(f"SHAP beeswarm — {cls_name}")
-                plt.tight_layout()
-                plt.show()
             except Exception as exc:
                 logger.warning("Beeswarm class %d failed: %s", cls_idx, exc)
     else:
         try:
-            plt.figure(figsize=(10, 6))
-            shap.summary_plot(
-                shap_matrix, X_plot,
-                feature_names=shap_feat_names,
-                max_display=max_display,
-                show=False,
+            plot_shap_summary(
+                shap_matrix, X_plot, shap_feat_names,
+                max_display=max_display, plot_type="summary",
             )
-            plt.title("SHAP beeswarm")
-            plt.tight_layout()
-            plt.show()
         except Exception as exc:
             logger.warning("Beeswarm failed: %s", exc)
 
@@ -458,18 +456,25 @@ def interpret_model_with_lime(
         instance = X_test.iloc[idx].values if hasattr(X_test, "iloc") else X_test[idx]
 
         try:
+            # Explain the class the model actually predicted for this instance
+            # — hardcoding label=1 would silently show a different class's
+            # explanation than the one printed as "Prediction" below whenever
+            # the model predicts anything other than class 1 (always true in
+            # genuinely multiclass settings, and half the time even in binary).
+            predicted_label = int(model.predict([instance])[0])
+
             exp = explainer.explain_instance(
-                instance, predict_fn, num_features=num_features, labels=(1,)
+                instance, predict_fn, num_features=num_features, labels=(predicted_label,)
             )
 
             print(f"\n  Instance {i} (index={idx}):")
-            print(f"  Prediction: class {model.predict([instance])[0]}")
+            print(f"  Prediction: class {predicted_label}")
             print("  Top local features:")
-            for feat, weight in exp.as_list(label=1)[:5]:
+            for feat, weight in exp.as_list(label=predicted_label)[:5]:
                 direction = "+" if weight > 0 else "-"
                 print(f"    {direction} {feat:<40} {weight:+.4f}")
 
-            fig = exp.as_pyplot_figure(label=1)
+            fig = exp.as_pyplot_figure(label=predicted_label)
             plt.title(f"LIME — Instance {i}", fontweight="bold")
             plt.tight_layout()
             plt.show()

@@ -99,11 +99,12 @@ def leakage_exploration(
 
         if pd.api.types.is_numeric_dtype(df[col]) and not is_cat_tgt:
             try:
-                # Pairwise deletion: include only rows where BOTH col and target are non-null.
-                # fillna(0) before pearsonr would distort the correlation coefficient —
-                # zeros are not a neutral imputation for Pearson (they shift the mean
-                # and compress variance), potentially producing r values that reflect
-                # imputation artifacts rather than true feature-target association.
+                # Use pairwise deletion so we compute Pearson only on rows where both
+                # the feature and target are present. Imputing missing values with
+                # zeros would bias the Pearson correlation (zeros change the mean
+                # and reduce variance) and could create misleading correlation
+                # results that reflect the imputation rather than a real
+                # association between feature and target.
                 mask = df[col].notna() & df[target_col].notna()
                 if mask.sum() < 10:
                     continue
@@ -249,8 +250,9 @@ def feature_importance_exploration(
                     h, _ = stats.kruskal(*groups)
                     n_tot = sum(len(g) for g in groups)
                     k     = len(groups)
-                    # Calculate Epsilon-squared using (n-1) as the denominator per Tomczak & Tomczak (2014).
-                    # Note: Distinct from Eta-squared, which uses (n-k).
+                    # Calculate Epsilon-squared (KW η²) using (n-1) in the
+                    # denominator as described by Tomczak & Tomczak (2014).
+                    # This differs from Eta-squared, which uses (n-k).
                     eta2  = max(0.0, (h - k + 1) / (n_tot - 1))
                     assoc[col] = eta2
                     metric_type[col] = "KW ε²"
@@ -276,6 +278,10 @@ def feature_importance_exploration(
             for cat_val in ohe.categories_[i][1:]:
                 ohe_col_to_orig[f"{orig_col}_{cat_val}"] = orig_col
 
+        # Map one-hot encoded column names back to their original categorical
+        # column. If the column is numeric or was not created by OHE, return it
+        # unchanged. This helps aggregate scores computed on encoded columns
+        # back to the original feature level.
     def _orig_name(col: str) -> str:
         if col in num_cols_raw:
             return col
@@ -287,6 +293,9 @@ def feature_importance_exploration(
         mi_fn   = mutual_info_classif if is_cat_tgt else mutual_info_regression
         mi_vals = mi_fn(X, y, random_state=42)
         for col, mi in zip(X.columns, mi_vals):
+            # Aggregate MI scores for encoded dummy columns to their original
+            # categorical feature so the final importance is reported at the
+            # feature level rather than per-encoded-category.
             orig = _orig_name(col)
             mi_scores[orig] = mi_scores.get(orig, 0.0) + float(mi)
     except Exception as exc:
@@ -299,6 +308,9 @@ def feature_importance_exploration(
         rf     = rf_cls(n_estimators=50, max_depth=6, random_state=42, n_jobs=-1)
         rf.fit(X, y)
         for col, imp in zip(X.columns, rf.feature_importances_):
+            # Sum feature importances for one-hot encoded columns back to the
+            # original categorical variable so importance reflects the feature
+            # rather than individual dummy levels.
             orig = _orig_name(col)
             rf_scores[orig] = rf_scores.get(orig, 0.0) + float(imp)
     except Exception as exc:
