@@ -304,7 +304,7 @@ def _print_normalization_summary(
     if verdict_counts:
         print(f"║{'  Normality Verdicts':^{W}}║")
         print(f"║  {SEP[:W-2]}  ║")
-        for v, icon in [("Normal"), ("Borderline"), ("Non-normal")]:
+        for v, icon in [("Normal", "✓"), ("Borderline", "~"), ("Non-normal", "✗")]:
             cnt = verdict_counts.get(v, 0)
             label = f"{icon} {v}"
             print(f"║    {label:<33}{cnt:>4}         ║")

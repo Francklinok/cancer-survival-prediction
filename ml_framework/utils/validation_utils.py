@@ -13,11 +13,9 @@ from typing import Any, Collection, Optional
 import numpy as np
 import pandas as pd
 
-
 # =============================================================================
 # COLUMN EXISTENCE
 # =============================================================================
-
 
 def validate_column_exists(
     df: pd.DataFrame,
@@ -29,7 +27,6 @@ def validate_column_exists(
         close = _close_matches(col, df.columns)
         hint = f"  Did you mean: {close}" if close else ""
         raise ValueError(f"Column '{col}' (param '{param_name}') not found in DataFrame.{hint}")
-
 
 def validate_columns_exist(
     df: pd.DataFrame,
@@ -43,23 +40,19 @@ def validate_columns_exist(
             f"Columns missing from DataFrame (param '{param_name}'): {missing}"
         )
 
-
 # =============================================================================
 # TYPE CHECKS
 # =============================================================================
-
 
 def validate_dataframe(obj: Any, param_name: str = "df") -> None:
     """Raise TypeError if *obj* is not a pd.DataFrame."""
     if not isinstance(obj, pd.DataFrame):
         raise TypeError(f"Expected pd.DataFrame for '{param_name}', got {type(obj).__name__}.")
 
-
 def validate_series(obj: Any, param_name: str = "y") -> None:
     """Raise TypeError if *obj* is not a pd.Series."""
     if not isinstance(obj, pd.Series):
         raise TypeError(f"Expected pd.Series for '{param_name}', got {type(obj).__name__}.")
-
 
 def validate_numeric_column(
     df: pd.DataFrame,
@@ -73,11 +66,9 @@ def validate_numeric_column(
             f"Column '{col}' must be numeric but has dtype '{df[col].dtype}'."
         )
 
-
 # =============================================================================
 # VALUE RANGE / CARDINALITY
 # =============================================================================
-
 
 def validate_positive_int(value: Any, param_name: str) -> None:
     """Raise ValueError if *value* is not a positive integer."""

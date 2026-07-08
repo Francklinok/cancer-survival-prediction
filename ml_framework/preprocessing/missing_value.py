@@ -140,13 +140,13 @@ def missing_data_handling(
     report["n_missing_after"]     = int(remaining.sum())
     report["cols_missing_after"]  = remaining.to_dict()
 
-    if verbose:
-        if remaining.empty:
-            print("\n All missing values successfully imputed.")
-        else:
-            print(f"\n {len(remaining)} column(s) with residual NaN:")
-            for col, cnt in remaining.items():
-                print(f"    - {col}: {cnt} NaN remaining")
+    # if verbose:
+    #     if remaining.empty:
+    #         print("\n All missing values successfully imputed.")
+    #     else:
+    #         print(f"\n {len(remaining)} column(s) with residual NaN:")
+    #         for col, cnt in remaining.items():
+    #             print(f"    - {col}: {cnt} NaN remaining")
 
     return df_imputed, report
 
@@ -279,39 +279,35 @@ def replace_value(
         if col in df_original.columns and df_original[col].dtype == "int64":
             df_target[col] = df_target[col].round().astype(int)
 
-def flag_analysis(df:pd.DataFrame, flag:str) -> None:
+def flag_analysis(df: pd.DataFrame, flag: str, target_col: str = "Recurrence") -> None:
     """
-    Analyze the added missing indicator flags (flag_missing_*)
-    to interpret the missingness mechanism (MCAR/MAR/MNAR).
+    Analyze an added missing indicator flag (flag_missing_*) against a
+    target variable, to help interpret the missingness mechanism
+    (MCAR/MAR/MNAR).
 
-    This function would:
-      - Compute correlation of flags with other features
-      - Visualize distributions of flags vs target variable
-      - Provide insights on whether missingness is random or systematic
+    Prints the flag's prevalence and the target's distribution split by
+    flag value, then plots it via flag_plot().
     """
-    #==============Flag distribution================
     n_was_missing = df[flag].sum()
     n_total = len(df)
     pct_missing = n_was_missing / n_total * 100
 
     print("═" * 55)
-    print("  ANALYSE — flag_missing_GeneticMarker")
+    print(f"  ANALYSIS — {flag}")
     print("═" * 55)
-    print(f"  Lignes avec NaN imputé  : {n_was_missing:,}  ({pct_missing:.1f}%)")
-    print(f"  Lignes complètes        : {n_total - n_was_missing:,}  ({100 - pct_missing:.1f}%)")
+    print(f"  Rows with imputed NaN  : {n_was_missing:,}  ({pct_missing:.1f}%)")
+    print(f"  Complete rows          : {n_total - n_was_missing:,}  ({100 - pct_missing:.1f}%)")
 
-    # 2==============Association target vs  flag================
     cross = (
         df
-        .groupby(flag)["TreatmentResponse"]
+        .groupby(flag)[target_col]
         .value_counts(normalize=True)
         .mul(100)
         .round(1)
         .rename("pct")
         .reset_index()
     )
-    cross[flag] = cross[flag].map({0: "Complet (0)", 1: "Était NaN (1)"})
+    cross[flag] = cross[flag].map({0: "Complete (0)", 1: "Was NaN (1)"})
     print(cross.to_string(index=False))
-    #================Visualisation================
     flag_plot(flag, n_was_missing, n_total, cross)
 

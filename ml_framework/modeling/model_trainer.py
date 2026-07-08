@@ -112,7 +112,7 @@ def train_models(
     # classic case of data leakage that would artificially boost our test scores.
     train_medians = X_train.median(numeric_only=True)
     X_train = X_train.fillna(train_medians)
-    X_test  = X_test.fillna(train_medians)  # use training medians on test — no leakage
+    X_test  = X_test.fillna(train_medians)  
 
     cv         = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=random_state)
     all_models = get_models(random_state=random_state, n_jobs=n_jobs, subset=models_to_test)

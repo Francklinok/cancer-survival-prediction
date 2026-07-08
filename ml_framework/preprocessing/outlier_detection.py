@@ -415,7 +415,10 @@ def plot_outlier_comparison(df: pd.DataFrame, col: str) -> None:
     info       = outliers[col]
     df_treated = treat_outliers(df, {col: info}, strategy="winsorize", verbose=False)
 
-    _, axes = plt.subplots(1, 2, figsize=(12, 4))
+    # sharex=True: the entire point of this before/after comparison is
+    # spread reduction from winsorization — without a shared scale, each
+    # subplot autoscales independently and the visual comparison is invalid.
+    _, axes = plt.subplots(1, 2, figsize=(12, 4), sharex=True)
 
     sns.boxplot(x=df[col], ax=axes[0], color="salmon",
                 flierprops={"marker": "o"})
