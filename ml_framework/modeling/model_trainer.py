@@ -63,20 +63,26 @@ def train_models(
     random_state: int = 42,
     n_jobs: int = -1,
     verbose: bool = True,
+    X_test: Optional[pd.DataFrame] = None,
+    y_test: Optional[pd.Series] = None,
 ) -> Dict:
     """
     Train multiple models, evaluate by stratified CV, and return results.
 
     Parameters
     ----------
-    X              : features (numeric, no NaN)
-    y              : target
+    X              : training features (numeric, no NaN) if X_test/y_test are given,
+                     otherwise the full feature set to split
+    y              : training target if X_test/y_test are given, otherwise full target
     models_to_test : model prefixes ['rf', 'gb', 'lr', 'svm', ...]
-    test_size      : test split proportion
+    test_size      : test split proportion (ignored if X_test/y_test are provided)
     cv_folds       : cross-validation folds
     random_state   : random seed
     n_jobs         : parallel workers
     verbose        : detailed output
+    X_test, y_test : pre-computed test split — pass these when the caller has
+                     already split the data (e.g. to fit normalization on train only),
+                     to avoid re-splitting internally
 
     Returns
     -------
@@ -85,15 +91,18 @@ def train_models(
     """
     n_classes, scoring = get_scoring_strategy(y)
 
-    # Stratified split BEFORE any imputation to prevent data leakage
-    try:
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state, stratify=y
-        )
-    except ValueError:
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state
-        )
+    if X_test is not None and y_test is not None:
+        X_train, y_train = X, y
+    else:
+        # Stratified split BEFORE any imputation to prevent data leakage
+        try:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=random_state, stratify=y
+            )
+        except ValueError:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=random_state
+            )
     # Avoid Data Leakage: Impute AFTER the train/test split!
     # We must calculate the median values using the training set ONLY, 
     # and then use those same medians to fill missing values in the test set.
