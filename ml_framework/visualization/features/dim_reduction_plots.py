@@ -52,12 +52,21 @@ def plot_pca_analysis(
     axes[0, 0].legend()
     axes[0, 0].grid(True, alpha=0.4)
 
-    # Scree plot
-    axes[0, 1].bar(range(1, min(20, len(explained_variance)) + 1),
-                   explained_variance[:20], color="steelblue", edgecolor="white", alpha=0.8)
+    _SCREE_MAX_SHOWN = 40
+    n_shown = min(_SCREE_MAX_SHOWN, len(explained_variance))
+    if len(explained_variance) > _SCREE_MAX_SHOWN:
+        logger.info(
+            "plot_pca_analysis: scree plot shows only the first %d of %d "
+            "components (label legibility) — cumulative variance panel "
+            "above still reflects all components.",
+            _SCREE_MAX_SHOWN, len(explained_variance),
+        )
+    axes[0, 1].bar(range(1, n_shown + 1),
+                   explained_variance[:n_shown], color="steelblue", edgecolor="white", alpha=0.8)
     axes[0, 1].set_xlabel("Component")
     axes[0, 1].set_ylabel("Explained Variance")
-    axes[0, 1].set_title("Scree Plot")
+    title_suffix = f" (first {n_shown} of {len(explained_variance)})" if len(explained_variance) > _SCREE_MAX_SHOWN else ""
+    axes[0, 1].set_title(f"Scree Plot{title_suffix}")
     axes[0, 1].grid(True, alpha=0.4)
 
     # Reconstruction error
@@ -159,7 +168,11 @@ def plot_biplot(
     Biplot overlay of PC1/PC2 scatter and loading arrows.
     """
     ax.scatter(X_reduced[:, 0], X_reduced[:, 1], alpha=0.4, s=20, color="steelblue")
-    scale = 3.0
+
+    score_radius = float(np.max(np.abs(X_reduced[:, :2]))) if X_reduced.size else 1.0
+    loading_radius = float(np.max(np.abs(components[:2, :]))) if components.size else 1.0
+    scale = (score_radius / loading_radius * 0.8) if loading_radius > 0 else 1.0
+
     for i, fname in enumerate(feature_names):
         ax.annotate(
             fname,
@@ -171,4 +184,6 @@ def plot_biplot(
     ax.set_title("Biplot PC1 × PC2")
     ax.set_xlabel("PC1")
     ax.set_ylabel("PC2")
+  
+    ax.set_aspect("equal", adjustable="datalim")
     ax.grid(True, alpha=0.3)

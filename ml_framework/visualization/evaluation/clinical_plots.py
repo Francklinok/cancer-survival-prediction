@@ -49,6 +49,15 @@ def plot_risk_visualizations(
 
     vc   = results["Risk_Category"].value_counts()
     cats = [c for c in risk_order if c in vc.index]
+   
+    unmapped = [c for c in vc.index if c not in risk_order]
+    if unmapped:
+        logger.warning(
+            "plot_risk_visualizations: unrecognized risk category label(s) %s "
+            "not in the known risk_order — plotting them anyway with a "
+            "default color.", unmapped,
+        )
+        cats = cats + sorted(unmapped, key=str)
 
     axes[0].bar(cats, [vc[c] for c in cats],
                 color=[risk_colors_map.get(c, "#95a5a6") for c in cats],

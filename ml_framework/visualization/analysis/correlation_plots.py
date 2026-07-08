@@ -71,7 +71,7 @@ def plot_correlation_heatmap(
 
     font_size = max(5, min(10, int(120 / max(n, 1))))
 
-    # ── Build annotation matrix (always string so fmt="" works uniformly) ──────
+    # ── Build annotation matrix ──────
     annot_data = pd.DataFrame(
         index=corr_matrix.index, columns=corr_matrix.columns, dtype=object
     )
@@ -187,5 +187,8 @@ def plot_vif_chart(vif_df: pd.DataFrame) -> None:
     plt.xlabel("VIF")
     plt.title("Variance Inflation Factor — Multicollinearity", fontweight="bold")
     plt.legend()
+  
+    if (vif_df["VIF"] > 0).all() and vif_df["VIF"].max() / max(vif_df["VIF"].min(), 1e-9) >= 100:
+        plt.xscale("log")
     plt.tight_layout()
     plt.show()

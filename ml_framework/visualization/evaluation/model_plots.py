@@ -47,7 +47,18 @@ def plot_confusion_matrix(
     """
     cm = confusion_matrix(y_test, y_pred)
     labels = class_names or list(np.unique(y_test))
-    cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True)
+   
+    row_sums = cm.sum(axis=1, keepdims=True)
+    if np.any(row_sums == 0):
+        logger.warning(
+            "plot_confusion_matrix: %d class(es) have zero support in y_test — "
+            "their normalized row will show as 0 rather than NaN.",
+            int(np.sum(row_sums == 0)),
+        )
+    cm_norm = np.divide(
+        cm.astype(float), row_sums,
+        out=np.zeros_like(cm, dtype=float), where=row_sums != 0,
+    )
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
 
@@ -158,9 +169,11 @@ def plot_score_distribution(y_proba: np.ndarray, y_test) -> None:
     """
     df_vis = pd.DataFrame({"score": y_proba, "class": y_test})
     plt.figure(figsize=(9, 5))
+   .
+    bin_edges = np.histogram_bin_edges(df_vis["score"], bins=30)
     for cls in sorted(df_vis["class"].unique()):
         subset = df_vis[df_vis["class"] == cls]["score"]
-        plt.hist(subset, bins=30, alpha=0.5, label=f"Class {cls}", edgecolor="white")
+        plt.hist(subset, bins=bin_edges, alpha=0.5, label=f"Class {cls}", edgecolor="white")
     plt.xlabel("Prediction score")
     plt.ylabel("Frequency")
     plt.title("Score Distribution by Class", fontsize=12, fontweight="bold")

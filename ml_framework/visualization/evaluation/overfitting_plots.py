@@ -88,6 +88,15 @@ def plot_validation_curve(
                      alpha=0.12, color="salmon")
     plt.axvline(param_range[best_val_idx], color="green", linestyle="--",
                 label=f"Optimal = {param_range[best_val_idx]}")
+
+    numeric_range = [p for p in param_range if isinstance(p, (int, float)) and p > 0]
+    if len(numeric_range) == len(param_range) and len(numeric_range) >= 3:
+        ratios = [numeric_range[i + 1] / numeric_range[i] for i in range(len(numeric_range) - 1)]
+        spans_orders_of_magnitude = max(numeric_range) / min(numeric_range) >= 100
+        roughly_geometric = (max(ratios) / min(ratios)) < 3 if min(ratios) > 0 else False
+        if spans_orders_of_magnitude and roughly_geometric:
+            plt.xscale("log")
+
     plt.xlabel(param_name)
     plt.ylabel(scoring)
     plt.title(f"Validation Curve — {param_name}", fontsize=12, fontweight="bold")

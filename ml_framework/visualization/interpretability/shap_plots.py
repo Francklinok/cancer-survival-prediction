@@ -26,6 +26,7 @@ def plot_shap_summary(
     max_display: int = 20,
     plot_type: str = "summary",
     shap_values=None,
+    title_suffix: str = "",
 ) -> None:
     """
     SHAP summary, bar, or beeswarm plot.
@@ -38,6 +39,7 @@ def plot_shap_summary(
     max_display   : number of features to display
     plot_type     : 'summary' | 'bar' | 'beeswarm'
     shap_values   : original SHAP Explanation object (required for beeswarm)
+    title_suffix  : appended to each plot's title (e.g. " — Class 1")
     """
     try:
         import shap
@@ -46,6 +48,8 @@ def plot_shap_summary(
         return
 
     plot_types = ["summary", "bar", "beeswarm"] if plot_type == "all" else [plot_type]
+    
+    plot_height = max(6, max_display * 0.35 + 1.5)
 
     for pt in plot_types:
         if pt == "summary":
@@ -53,9 +57,10 @@ def plot_shap_summary(
                 shap_matrix, X_test,
                 feature_names=feature_names,
                 max_display=max_display,
+                plot_size=(10, plot_height),
                 show=False,
             )
-            plt.title("Feature Importance and Impact (SHAP Summary)", fontweight="bold")
+            plt.title(f"Feature Importance and Impact (SHAP Summary){title_suffix}", fontweight="bold")
             plt.tight_layout()
             plt.show()
 
@@ -65,15 +70,18 @@ def plot_shap_summary(
                 feature_names=feature_names,
                 plot_type="bar",
                 max_display=max_display,
+                plot_size=(10, plot_height),
                 show=False,
             )
-            plt.title("Feature Importance (SHAP Mean |shap|)", fontweight="bold")
+            plt.title(f"Feature Importance (SHAP Mean |shap|){title_suffix}", fontweight="bold")
             plt.tight_layout()
             plt.show()
 
         elif pt == "beeswarm" and shap_values is not None and hasattr(shap_values, "values"):
+            fig = plt.gcf()
+            fig.set_size_inches(10, plot_height)
             shap.plots.beeswarm(shap_values, max_display=max_display, show=False)
-            plt.title("SHAP Value Distribution (Beeswarm)", fontweight="bold")
+            plt.title(f"SHAP Value Distribution (Beeswarm){title_suffix}", fontweight="bold")
             plt.tight_layout()
             plt.show()
 

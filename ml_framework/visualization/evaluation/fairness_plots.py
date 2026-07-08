@@ -37,7 +37,9 @@ def plot_fairness_metrics(group_metrics: Dict, attr: str) -> None:
         vals = [group_metrics[g][metric] for g in groups]
         ax.bar([str(g) for g in groups], vals, color=palette, edgecolor="white")
         ax.set_title(metric.replace("_", " ").title(), fontweight="bold")
-        ax.set_ylim([0, 1])
+        v_min, v_max = min(vals), max(vals)
+        pad = max(0.05, (v_max - v_min) * 0.3)
+        ax.set_ylim(max(0, v_min - pad), min(1, v_max + pad))
         ax.axhline(float(np.mean(vals)), color="red", linestyle="--", lw=1.2, label="Mean")
         ax.tick_params(axis="x", rotation=30)
         ax.set_ylabel("Score")

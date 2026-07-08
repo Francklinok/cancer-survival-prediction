@@ -47,12 +47,24 @@ def plot_target_analysis(df: pd.DataFrame, target_col: str) -> None:
                 ha="center", va="bottom", fontsize=9,
             )
 
-        axes[1].pie(
-            pct, labels=vc.index, autopct="%1.1f%%",
-            colors=sns.color_palette("Set2", len(vc)),
-            wedgeprops={"edgecolor": "white"},
-        )
-        axes[1].set_title("Proportions")
+        _PIE_MAX_SLICES = 6
+        if len(vc) <= _PIE_MAX_SLICES:
+            axes[1].pie(
+                pct, labels=vc.index, autopct="%1.1f%%",
+                colors=sns.color_palette("Set2", len(vc)),
+                wedgeprops={"edgecolor": "white"},
+            )
+            axes[1].set_title("Proportions")
+        else:
+            order = pct.sort_values(ascending=True)
+            axes[1].barh(
+                order.index.astype(str), order.values,
+                color=sns.color_palette("Set2", len(order)), edgecolor="white",
+            )
+            for i, v in enumerate(order.values):
+                axes[1].text(v + 0.3, i, f"{v:.1f}%", va="center", fontsize=8)
+            axes[1].set_xlabel("% of observations")
+            axes[1].set_title(f"Proportions ({len(vc)} classes)")
 
         majority_pct = pct.max()
         minority_pct = pct.min()

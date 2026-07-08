@@ -252,7 +252,8 @@ class VisualizationSystem:
 
         fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
-        kw = dict(cmap="coolwarm", center=0, linewidths=0.3, annot=len(cols) <= 8, fmt=".1f")
+        kw = dict(cmap="coolwarm", center=0, vmin=-1, vmax=1,
+                  linewidths=0.3, annot=len(cols) <= 8, fmt=".1f")
         sns.heatmap(corr_orig,    ax=axes[0], **kw)
         axes[0].set_title("Correlation — Original")
 
@@ -348,7 +349,7 @@ class VisualizationSystem:
         for i, (c, s) in enumerate(zip(cols_m, scores)):
             ax.text(i, s + 1, f"{s:.0f}%", ha="center", va="bottom", fontsize=8)
 
-        ax.set_ylim(0, 115)
+        ax.set_ylim(0, max(115, max(scores, default=0) * 1.15))
         ax.axhline(70, color="green",  linestyle="--", alpha=0.5, label="Good (70%)")
         ax.axhline(40, color="orange", linestyle="--", alpha=0.5, label="Fair (40%)")
         ax.set_ylabel("Effectiveness score (%)")

@@ -29,8 +29,8 @@ def plot_missing_overview(df: pd.DataFrame, missing_df: pd.DataFrame) -> None:
     """
     if missing_df.empty:
         return
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    n_cols = len(missing_df)
+    fig, axes = plt.subplots(1, 2, figsize=(14, max(5, n_cols * 0.3 + 1)))
 
     missing_df["missing_pct"].plot.barh(ax=axes[0], color="salmon", edgecolor="white")
     axes[0].set_xlabel("% Missing Values")

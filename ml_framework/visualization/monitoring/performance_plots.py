@@ -32,17 +32,23 @@ def plot_performance_history(history_df: pd.DataFrame, metrics: List[str]) -> No
         logger.warning("No metric columns found in history DataFrame.")
         return
 
+    if "timestamp" in history_df.columns:
+        x = pd.to_datetime(history_df["timestamp"])
+        xlabel = "Evaluation date"
+    else:
+        x = range(len(history_df))
+        xlabel = "Evaluation #"
+
     plt.figure(figsize=(12, 6))
     for metric in metric_cols:
-        plt.plot(
-            range(len(history_df)), history_df[metric],
-            marker="o", lw=2, label=metric,
-        )
+        plt.plot(x, history_df[metric], marker="o", lw=2, label=metric)
 
-    plt.xlabel("Evaluation #")
+    plt.xlabel(xlabel)
     plt.ylabel("Score")
     plt.title("Performance Trend Over Time", fontsize=13, fontweight="bold")
     plt.legend()
     plt.grid(True, alpha=0.4)
+    if "timestamp" in history_df.columns:
+        plt.gcf().autofmt_xdate()
     plt.tight_layout()
     plt.show()

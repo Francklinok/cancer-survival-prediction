@@ -44,10 +44,13 @@ def plot_combined_selection(
         fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         fig.suptitle("Combined Feature Selection Analysis", fontsize=15, fontweight="bold")
 
-        x_pos = range(len(features))
-        axes[0, 0].barh(x_pos, stat_vals, alpha=0.6, label="Statistical Score", color="steelblue")
-        axes[0, 0].barh(x_pos, pca_vals,  alpha=0.5, label="PCA Score",         color="salmon")
-        axes[0, 0].set_yticks(x_pos)
+        bar_h = 0.38
+        y_pos = np.arange(len(features))
+        axes[0, 0].barh(y_pos + bar_h / 2, stat_vals, height=bar_h,
+                        label="Statistical Score", color="steelblue")
+        axes[0, 0].barh(y_pos - bar_h / 2, pca_vals, height=bar_h,
+                        label="PCA Score", color="salmon")
+        axes[0, 0].set_yticks(y_pos)
         axes[0, 0].set_yticklabels([f[:25] for f in features], fontsize=7)
         axes[0, 0].set_xlabel("Normalized Score")
         axes[0, 0].set_title("Score Comparison by Method")
@@ -99,17 +102,25 @@ def plot_robustness(robustness_results: List[Dict[str, Any]]) -> None:
         weights = [r["weight_stat"] for r in robustness_results]
 
         plt.figure(figsize=(12, 6))
+       
+        OUT_OF_TOP5 = 6
         for feature in all_features:
             positions = []
             for r in robustness_results:
                 if feature in r["top_5_features"]:
                     positions.append(r["top_5_features"].index(feature) + 1)
                 else:
-                    positions.append(6)
+                    positions.append(np.nan)
 
-            if any(p <= 3 for p in positions):
-                plt.plot(weights, positions, marker="o", label=feature[:20], linewidth=2)
+            if any(p <= 3 for p in positions if not np.isnan(p)):
+                line, = plt.plot(weights, positions, marker="o", label=feature[:20], linewidth=2)
+                dropped_w = [w for w, p in zip(weights, positions) if np.isnan(p)]
+                if dropped_w:
+                    plt.scatter(dropped_w, [OUT_OF_TOP5] * len(dropped_w),
+                                marker="x", color=line.get_color(), alpha=0.5, zorder=3)
 
+        plt.axhline(OUT_OF_TOP5 - 0.5, color="grey", linestyle=":", linewidth=1,
+                    label="Out of top 5 (below this line)")
         plt.xlabel("Statistical Method Weight")
         plt.ylabel("Rank in Top 5")
         plt.title("Feature Selection Robustness by Weight")

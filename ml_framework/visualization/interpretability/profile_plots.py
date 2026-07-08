@@ -48,7 +48,8 @@ def plot_risk_profiles(
                 bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
                 f"{score:.2f}", ha="center", va="bottom", fontweight="bold",
             )
-        axes[0].set_ylim(0, 1)
+            
+        axes[0].set_ylim(0, max(1.0, max(scores, default=0) * 1.1))
         axes[0].set_ylabel("Risk Score")
         axes[0].set_title("Score by Profile")
         axes[0].tick_params(axis="x", rotation=20)

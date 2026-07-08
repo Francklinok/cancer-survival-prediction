@@ -81,12 +81,15 @@ def plot_rebalance_comparison(
     y_after  : rebalanced target series
     strategy : name of the rebalancing strategy applied
     """
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    palette = sns.color_palette("Set2", y_before.nunique())
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=True)
+
+    all_classes = sorted(set(y_before.unique()) | set(y_after.unique()), key=str)
+    palette_map = dict(zip(all_classes, sns.color_palette("Set2", len(all_classes))))
 
     for ax, y_d, title in zip(axes, [y_before, y_after], ["Before", "After"]):
         vc = y_d.value_counts()
-        ax.bar(vc.index.astype(str), vc.values, color=palette, edgecolor="white")
+        bar_colors = [palette_map[c] for c in vc.index]
+        ax.bar(vc.index.astype(str), vc.values, color=bar_colors, edgecolor="white")
         ax.set_title(f"{title} Rebalancing", fontweight="bold")
         ax.set_ylabel("Count")
         for i, (idx, cnt) in enumerate(vc.items()):

@@ -36,7 +36,8 @@ def plot_feature_importance_bar(
     top_n       : N shown in title
     """
     plt.figure(figsize=(10, max(5, top_n * 0.4 + 1)))
-    colors = plt.cm.RdYlGn_r(np.linspace(0.15, 0.85, len(top_df)))
+   
+    colors = plt.cm.Blues(np.linspace(0.35, 0.95, len(top_df)))
     bars = plt.barh(top_df["Feature"][::-1], top_df["Importance"][::-1],
                     color=colors[::-1], edgecolor="white")
     for bar, pct in zip(bars, top_df["Importance_pct"][::-1]):
@@ -56,7 +57,8 @@ def plot_cumulative_importance(importance_df: pd.DataFrame) -> None:
     ----------
     importance_df : DataFrame with column 'Importance_cumsum_pct'
     """
-    plt.figure(figsize=(9, 5))
+    
+    plt.figure(figsize=(9, max(5, len(importance_df) * 0.05 + 3)))
     x = range(1, len(importance_df) + 1)
     plt.plot(x, importance_df["Importance_cumsum_pct"], color="steelblue", lw=2, marker=".")
     plt.axhline(80, color="orange", linestyle="--", lw=1.5, label="80%")
@@ -94,6 +96,8 @@ def plot_permutation_importance(
         color="steelblue", alpha=0.8, edgecolor="white",
         error_kw={"ecolor": "black", "capsize": 3},
     )
+   
+    plt.axvline(0, color="black", lw=0.8)
     plt.xlabel(f"{scoring} decrease after permutation")
     plt.title(f"Permutation Importance — Top {top_n}", fontsize=13, fontweight="bold")
     plt.tight_layout()

@@ -250,7 +250,8 @@ def anomaly_explanation_plot(top: pd.DataFrame) -> None:
         plt.show()
 
 def cohort_analysis_Plot(cohort_stats: pd.DataFrame, cohort_col: str, target_col: str) -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    n_cohorts = len(cohort_stats)
+    fig, axes = plt.subplots(1, 2, figsize=(max(14, n_cohorts * 0.6), 5))
 
     axes[0].plot(cohort_stats["cohort"], cohort_stats["mean"],
                     marker="o", color="steelblue", linewidth=2, label="Mean")

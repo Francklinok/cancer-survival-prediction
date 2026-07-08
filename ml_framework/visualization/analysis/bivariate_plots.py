@@ -40,9 +40,11 @@ def plot_numeric_vs_numeric(
         ax   = axes[i]
         data = df[[col, target_col]].dropna()
         r, p = stats.pearsonr(data[col], data[target_col])
+        n = len(data)
+        alpha = max(0.05, min(0.3, 300.0 / n)) if n > 0 else 0.3
         sns.regplot(
             x=col, y=target_col, data=data, ax=ax,
-            scatter_kws={"alpha": 0.3, "s": 20, "color": "steelblue"},
+            scatter_kws={"alpha": alpha, "s": 20, "color": "steelblue"},
             line_kws={"color": "red", "linewidth": 1.5},
         )
         sig = "✓" if p < 0.05 else "✗"
@@ -116,7 +118,6 @@ def plot_categorical_vs_categorical(
             ax=axes[i], linewidths=0.5,
             cbar_kws={"shrink": 0.7},
         )
-        # assoc_df may have 'feature' as index or as a regular column
         if "feature" in assoc_df.columns:
             cv_vals = assoc_df.loc[assoc_df["feature"] == col, "cramers_v"].values
         else:

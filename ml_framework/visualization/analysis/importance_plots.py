@@ -69,10 +69,22 @@ def plot_combined_importance(imp_df: pd.DataFrame, target_col: str) -> None:
             ["Assoc rank", "MI rank", "RF rank"] if rank_cols
             else detail_cols
         )
+        detail_data = imp_df[detail_cols].rename(columns=dict(zip(detail_cols, col_labels))).round(3)
+        if rank_cols:
+            # Rank columns are already normalised to [0, 1] by construction.
+            heatmap_kwargs = dict(cmap="Blues", vmin=0, vmax=1)
+        else:
+            
+            has_negative = bool((detail_data < 0).to_numpy().any())
+            if has_negative:
+                bound = float(detail_data.abs().to_numpy().max() or 1.0)
+                heatmap_kwargs = dict(cmap="RdBu_r", vmin=-bound, vmax=bound, center=0)
+            else:
+                heatmap_kwargs = dict(cmap="Blues", vmin=0, vmax=float(detail_data.to_numpy().max() or 1.0))
         sns.heatmap(
-            imp_df[detail_cols].rename(columns=dict(zip(detail_cols, col_labels))).round(3),
-            annot=True, fmt=".2f", cmap="Blues", ax=axes[1],
-            linewidths=0.5, vmin=0, vmax=1,
+            detail_data,
+            annot=True, fmt=".2f", ax=axes[1],
+            linewidths=0.5, **heatmap_kwargs,
         )
         axes[1].set_title(
             "Per-metric rank (0=lowest, 1=highest)" if rank_cols
