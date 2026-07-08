@@ -224,11 +224,13 @@ def target_encoding(
     """
     Target encoding with James-Stein regularization (smoothing).
 
-    Formula: encoded = (n × mean_cat + smoothing × mean_global) / (n + smoothing)
+    Formula: encoded = (n × mean_cat + λ × mean_global) / (n + λ)
+    where n = category count, λ = smoothing parameter.
 
     Parameters
     ----------
-    smoothing : regularization strength (higher → closer to global mean)
+    smoothing         : regularization strength λ (higher → closer to global mean)
+    min_samples_leaf  : unused — kept for backward-compatibility only
 
     Returns
     -------
@@ -243,8 +245,10 @@ def target_encoding(
             continue
 
         stats = df_out.groupby(col)[target_col].agg(["mean", "count"])
-        smoother = 1 / (1 + np.exp(-(stats["count"] - min_samples_leaf) / smoothing))
-        smooth_mean = smoother * stats["mean"] + (1 - smoother) * global_mean
+        smooth_mean = (
+            (stats["count"] * stats["mean"] + smoothing * global_mean)
+            / (stats["count"] + smoothing)
+        )
 
         df_out[col] = df_out[col].map(smooth_mean).fillna(global_mean)
         encoding_maps[col] = smooth_mean.to_dict()
