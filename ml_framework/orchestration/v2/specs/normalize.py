@@ -1,5 +1,5 @@
 """
-specs/normalize.py — ModuleSpec for zero-leakage smart normalization.
+specs/normalize.py — ModuleSpec for zero-leakage normalization.
 
 Business logic untouched: column analysis, strategy suggestion, and
 normalization application are wrapped verbatim from NormalizeStep.run() in
