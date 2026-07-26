@@ -1,7 +1,10 @@
 """
-config.py — Central configuration for the medical ml_framework.
+config.py — Central configuration for ml_framework.
 
 All constants, dataclasses, and global parameters are consolidated here.
+Defaults are domain-neutral .
+Domain-specific defaults  are available via FrameworkConfig.from_domain(),
+see DOMAIN_PROFILES below.
 """
 
 from __future__ import annotations
@@ -40,7 +43,6 @@ import sys as _sys
 
 def _setup_logging() -> None:
     root = logging.getLogger()
-    # Remove any existing handlers to avoid duplication on re-import
     for _h in root.handlers[:]:
         root.removeHandler(_h)
     _stream = _sys.stdout
@@ -141,8 +143,14 @@ class DataConfig:
     max_missing_ratio: float = 0.50         # columns with > 50% NaN → dropped
     min_variance: float = 1e-8              # minimum variance to retain a column
     id_columns: List[str] = field(          # identifier columns dropped during cleaning
-        default_factory=lambda: ["PatientID"]
+        default_factory=list
     )
+
+    binary_mappings: dict = field(default_factory=dict)
+    ordinal_mappings: dict = field(default_factory=dict)
+    nominal_columns: List[str] = field(default_factory=list)
+
+    domain_features_fn: Optional[object] = None
 
 
 @dataclass
@@ -168,21 +176,70 @@ class FrameworkConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
 
-    # Known ordinal columns for the medical domain (cancer dataset)
-    ordinal_columns: List[str] = field(
-        default_factory=lambda: [
-            "Cancer_Stage", "Obesity_BMI", "Physical_Activity",
-            "Diet_Risk", "Economic_Classification", "Healthcare_Access",
-            "SmokingStatus", "Stage", "TreatmentResponse",
-            "Survival_Category", "Age_Group", "BMI_Category",
-            "Tumor_Size_Category",
-        ]
-    )
+    ordinal_columns: List[str] = field(default_factory=list)
 
-    sensitive_attributes: List[str] = field(
-        default_factory=lambda: ["Gender", "Race/Ethnicity", "Age_Group"]
-    )
+    sensitive_attributes: List[str] = field(default_factory=list)
+
+    @classmethod
+    def from_domain(cls, domain: str, **overrides) -> "FrameworkConfig":
+        """
+        Build a FrameworkConfig pre-populated with a known domain's defaults.
+        This allows you to opt into domain-specific column names and thresholds 
+        without changing the system's general defaults. If an unknown domain is passed,
+        it raises a ValueError with a list of valid options
+
+        Parameters
+        ----------
+        domain    : key into DOMAIN_PROFILES (e.g. "medical")
+        overrides : any FrameworkConfig field to override on top of the
+                    domain profile (e.g. model=ModelConfig(target_column=...))
+        """
+        if domain not in DOMAIN_PROFILES:
+            raise ValueError(
+                f"Unknown domain '{domain}'. Available: {sorted(DOMAIN_PROFILES)}"
+            )
+        profile = DOMAIN_PROFILES[domain]()
+        for key, value in overrides.items():
+            setattr(profile, key, value)
+        return profile
 
 
-# Default instance accessible throughout the framework
+# Default instance accessible throughout the framework — domain-neutral.
 DEFAULT_CONFIG = FrameworkConfig()
+
+
+def _medical_domain_profile() -> "FrameworkConfig":
+    """
+    Domain profile for the oncology/cancer-recurrence reference dataset used during 
+    initial framework development (see notebooks/test_recur.ipynb).
+
+    Kept separate from global defaults so the framework remains dataset-agnostic out of 
+    the box. Activate it explicitly using FrameworkConfig.from_domain("medical").
+    """
+    # Deferred import: avoids a module-level import cycle between config.py
+    from ml_framework.domain.medical.encoding_mappings import get_encoding_mappings
+    from ml_framework.domain.medical.oncology_features import add_oncology_features
+
+    binary_map, ordinal_map, nominal_cols = get_encoding_mappings()
+
+    config = FrameworkConfig()
+    config.data.id_columns = ["PatientID"]
+    config.data.binary_mappings = binary_map
+    config.data.ordinal_mappings = ordinal_map
+    config.data.nominal_columns = nominal_cols
+    config.data.domain_features_fn = add_oncology_features
+    config.ordinal_columns = [
+        "Cancer_Stage", "Obesity_BMI", "Physical_Activity",
+        "Diet_Risk", "Economic_Classification", "Healthcare_Access",
+        "SmokingStatus", "Stage", "TreatmentResponse",
+        "Survival_Category", "Age_Group", "BMI_Category",
+        "Tumor_Size_Category",
+    ]
+    config.sensitive_attributes = ["Gender", "Race/Ethnicity", "Age_Group"]
+    return config
+
+
+# Registry of known domain profiles, used by FrameworkConfig.from_domain().
+DOMAIN_PROFILES = {
+    "medical": _medical_domain_profile,
+}

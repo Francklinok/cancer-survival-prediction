@@ -1,14 +1,22 @@
 """
-ml_framework — Framework ML medical production-ready.
+ml_framework — General-purpose, ML framework.
 
-Import rapide :
+Domain-neutral by default;
+An optional medical/oncology domain pack
+(ml_framework.domain.medical) is available for the reference dataset .
+
+Quick import:
 
     from ml_framework import generate_model_card, diagnostic_analysis
-    from ml_framework.orchestration.pipeline import MedicalMLPipeline
+    from ml_framework.orchestration.pipeline import MLPipeline
     from ml_framework.config.config import FrameworkConfig, ModelConfig
 
-    pipeline = MedicalMLPipeline()
-    pipeline.run("data.csv", target_column="Recurrence")
+    pipeline = MLPipeline()
+    pipeline.run("data.csv", target_column="target")
+
+    # Medical/oncology reference dataset:
+    #   pipeline = MLPipeline(FrameworkConfig.from_domain("medical"))
+    #   pipeline.run("data.csv", target_column="Recurrence")
 """
 
 __version__ = "2.0.0"
@@ -30,13 +38,13 @@ from ml_framework.config.config import (
     ReportConfig,
 )
 
-# ── Pipeline principal ────────────────────────────────────────────────────────
-from ml_framework.orchestration.pipeline import MedicalMLPipeline
+# ── Main pipeline ─────────────────────────────────────────────────────────────
+from ml_framework.orchestration.pipeline import MLPipeline, MedicalMLPipeline
 
-# ── Chargement de données ─────────────────────────────────────────────────────
+# ── Data loading ─────────────────────────────────────────────────────────────
 from ml_framework.services.data_loading import load_data
 
-# ── Analyse & diagnostic ──────────────────────────────────────────────────────
+# ── Analysis & diagnostics ──────────────────────────────────────────────────
 from ml_framework.analysis.diagnostic_analysis import (
     ci_str,
     diagnostic_analysis,
@@ -55,7 +63,7 @@ from ml_framework.preprocessing.missing_value import (
     replace_value,
 )
 
-# ── Model Card ────────────────────────────────────────────────────────────────
+# ── Model card ───────────────────────────────────────────────────────────────
 from ml_framework.modeling.model_card import (
     generate_model_card,
     save_model_card,
@@ -64,6 +72,7 @@ from ml_framework.modeling.model_card import (
 
 __all__ = [
     # Config
+    "MLPipeline",
     "MedicalMLPipeline",
     "FrameworkConfig",
     "ModelConfig",
@@ -73,7 +82,7 @@ __all__ = [
     "DEFAULT_CONFIG",
     # Data loading
     "load_data",
-    # Analyse
+    # Analysis
     "ci_str",
     "diagnostic_analysis",
     "causal_analysis",
@@ -84,7 +93,7 @@ __all__ = [
     "OutlierTreatmentSystem",
     "missing_data_handling",
     "replace_value",
-    # Model Card
+    # Model card
     "generate_model_card",
     "save_model_card",
     "print_model_card",
