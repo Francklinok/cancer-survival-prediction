@@ -139,7 +139,7 @@ def save_pipeline_results(
     target_column: str = "target",
 ) -> List[str]:
     """
-    Save the complete results of a MedicalMLPipeline run.
+    Save the complete results of an MLPipeline run.
 
     Saves:
       - final_dataset.csv    (if 'csv' in formats)

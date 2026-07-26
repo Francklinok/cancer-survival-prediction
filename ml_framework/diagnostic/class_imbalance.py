@@ -7,7 +7,7 @@ Features:
     RandomOverSampler, RandomUnderSampler, TomekLinks, SMOTEENN
   - Rebalancing impact evaluation
   - Automatic recommendations based on imbalance level
-  - Medical contextual interpretations
+  - Contextual interpretation of the severity level
 
 All plotting delegated to visualization.analysis.class_balance_plots.
 """
