@@ -99,7 +99,7 @@ def fairness_audit(
 
         print(f"\n  Sensitive attribute: {attr}")
         group_metrics = _compute_group_metrics(analysis_df, attr)
-        disparities   = _compute_disparities(group_metrics)
+        disparities   = _compute_disparities(group_metrics, disparity_threshold)
 
         if verbose:
             _print_group_metrics(group_metrics, disparities, attr, disparity_threshold)
@@ -152,21 +152,22 @@ def _compute_group_metrics(analysis_df: pd.DataFrame, attr: str) -> Dict:
     return group_metrics
 
 
-def _compute_disparities(group_metrics: Dict) -> Dict:
+def _compute_disparities(group_metrics: Dict, abs_gap_threshold: float = 0.20) -> Dict:
     """Compute inter-group disparities.
 
-    Reports BOTH the absolute gap AND the ratio for each metric.
-    The previous code reported only the relative gap (max - min) / max, which
-    conflates the two and is unstable when the max approaches zero.
+    Calculates both the absolute gap and the ratio for each metric to provide a clear, balanced view 
+    of disparities—avoiding the noise that relative calculations often introduce when base numbers are small.
 
-    Medical context thresholds (stricter than EEOC general industry):
-      absolute gap > 0.10 → clinically significant disparity
-      ratio < 0.80        → EEOC 80% Rule violation (legal threshold)
+    A metric triggers a flag if it crosses either threshold:
+
+        Absolute gap exceeds abs_gap_threshold (your primary criteria for meaningful difference).
+        Ratio falls below 0.90 (a secondary check applied across all evaluations).
+
+    Defaults to 0.20 to mirror common industry standards (like the EEOC rule). 
+    If your domain calls for tighter boundaries—such as 0.10 for clinical models—you can easily pass your preferred target via disparity_threshold.
     """
     metrics_keys = ["tpr", "ppv", "selection_rate"]
     disparities: Dict = {}
-
-    MEDICAL_ABS_THRESHOLD = 0.10  # WHO / medical ethics: 10% absolute gap is material
 
     for key in metrics_keys:
         vals = [m[key] for m in group_metrics.values() if m["n"] > 0]
@@ -178,9 +179,8 @@ def _compute_disparities(group_metrics: Dict) -> Dict:
         disparities[f"{key}_abs_gap"] = round(float(abs_gap), 4)
         disparities[f"{key}_ratio"]   = round(float(ratio),   4)
         # Flag if either criterion is violated (AND logic: both needed for full compliance)
-        disparities[f"{key}_flagged"]  = bool(abs_gap > MEDICAL_ABS_THRESHOLD or ratio < 0.90)
+        disparities[f"{key}_flagged"]  = bool(abs_gap > abs_gap_threshold or ratio < 0.90)
 
-    # 80% Rule (Disparate Impact Ratio) — EEOC guideline: min_rate / max_rate >= 0.80
     sel_vals = [m["selection_rate"] for m in group_metrics.values() if m["n"] > 0]
     if len(sel_vals) >= 2:
         dir_ratio = min(sel_vals) / max(sel_vals) if max(sel_vals) > 0 else 1.0
@@ -199,7 +199,7 @@ def _print_group_metrics(group_metrics, disparities, attr, disp_thresh):
     metrics_df = pd.DataFrame(group_metrics).T[["n", "selection_rate", "tpr", "ppv", "tnr"]]
     print(metrics_df.to_string())
 
-    print("\n  Disparities (absolute gap | ratio | medical threshold > 0.10):")
+    print(f"\n  Disparities (absolute gap | ratio | threshold > {disp_thresh:.2f}):")
     for base_key in ["tpr", "ppv", "selection_rate"]:
         abs_gap = disparities.get(f"{base_key}_abs_gap")
         ratio   = disparities.get(f"{base_key}_ratio")
@@ -227,7 +227,7 @@ def _print_recommendations(audit_results: Dict, disp_thresh: float) -> None:
 
         if flagged_metrics:
             has_issues = True
-            print(f"\n  Attribute '{attr}' — significant disparities (abs_gap > 0.10):")
+            print(f"\n  Attribute '{attr}' — significant disparities (abs_gap > {disp_thresh:.2f}):")
             for base in flagged_metrics:
                 abs_gap = disp.get(f"{base}_abs_gap", 0)
                 ratio   = disp.get(f"{base}_ratio", 1)
