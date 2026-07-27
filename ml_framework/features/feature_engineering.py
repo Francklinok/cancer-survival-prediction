@@ -113,7 +113,16 @@ class AdaptiveFeatureEngine(BaseEstimator, TransformerMixin):
     scoring             : sklearn scoring string (default 'f1_macro')
     leakage_cols        : extra column names to skip (merged with _LEAKAGE_COLS)
     skip_leakage_cols   : if True, skip known temporal/leakage columns
-    add_medical         : add domain-specific medical features (evaluated too)
+    domain_features_fn  : optional callable(df, target_col) -> List[str] that
+                          adds domain-specific engineered features in place
+                          (e.g. ml_framework.domain.medical.add_oncology_features).
+                          These are applied unconditionally (not CV-gain-filtered),
+                          since they encode known domain relationships rather
+                          than candidate noise. None (default) = no domain
+                          features — framework-neutral behaviour.
+    add_medical         : deprecated back-compat alias — True is equivalent to
+                          domain_features_fn=add_oncology_features. Prefer
+                          passing domain_features_fn explicitly.
     verbose             : print a selection table
     random_state        : reproducibility seed
     """
@@ -128,7 +137,8 @@ class AdaptiveFeatureEngine(BaseEstimator, TransformerMixin):
         scoring: str = "f1_macro",
         leakage_cols: Optional[List[str]] = None,
         skip_leakage_cols: bool = True,
-        add_medical: bool = True,
+        domain_features_fn=None,
+        add_medical: bool = False,
         verbose: bool = True,
         random_state: int = 42,
     ):
@@ -140,6 +150,10 @@ class AdaptiveFeatureEngine(BaseEstimator, TransformerMixin):
         self.scoring              = scoring
         self.leakage_cols         = set(leakage_cols or []) | _LEAKAGE_COLS
         self.skip_leakage_cols    = skip_leakage_cols
+        if domain_features_fn is None and add_medical:
+            from ml_framework.domain.medical.oncology_features import add_oncology_features
+            domain_features_fn = add_oncology_features
+        self.domain_features_fn  = domain_features_fn
         self.add_medical          = add_medical
         self.verbose              = verbose
         self.random_state         = random_state
@@ -234,9 +248,9 @@ class AdaptiveFeatureEngine(BaseEstimator, TransformerMixin):
         df_out    = X.copy()
         added: List[str] = []
 
-        if self.add_medical:
-            med_new = _add_medical_features(df_out, self.target_col)
-            added.extend(med_new)
+        if self.domain_features_fn is not None:
+            domain_new = self.domain_features_fn(df_out, self.target_col)
+            added.extend(domain_new)
 
         for rec in self.retained_:
             name    = rec["name"]
@@ -256,7 +270,7 @@ class AdaptiveFeatureEngine(BaseEstimator, TransformerMixin):
 
         return df_out, added
 
-    def fit_transform(                                 # type: ignore[override]
+    def fit_transform(                             
         self, X: pd.DataFrame, y: pd.Series
     ) -> Tuple[pd.DataFrame, List[str]]:
         return self.fit(X, y).transform(X)
@@ -439,80 +453,23 @@ class AdaptiveFeatureEngine(BaseEstimator, TransformerMixin):
 
 
 # =============================================================================
-# DOMAIN-SPECIFIC MEDICAL FEATURES  (applied unconditionally — no CV overhead)
+# DOMAIN-SPECIFIC FEATURES — backward-compatible re-export
 # =============================================================================
+#
+# The oncology-specific implementation that used to live here moved to
+# ml_framework.domain.medical.oncology_features.add_oncology_features()
+# (identical formulas and behaviour) so this module stays domain-neutral.
+# _add_medical_features is kept as a deprecated alias for any external code
+# still importing it directly.
 
 
 def _add_medical_features(
     df: pd.DataFrame,
     target_col: Optional[str] = None,
 ) -> List[str]:
-    """
-    Clinical interaction features grounded in oncology domain knowledge.
-
-    These encode known risk relationships (not generic arithmetic) and are
-    therefore exempt from CV filtering — they either exist in the dataset or
-    not; they add no noise when the corresponding columns are absent.
-    """
-    new_cols: List[str] = []
-
-    _stage_map   = {"I": 1, "II": 2, "III": 3, "IV": 4}
-    _smoking_map = {"Non-Smoker": 0, "Former Smoker": 1, "Smoker": 2}
-    _family_map  = {"No": 0, "Yes": 1}
-
-    def _asnum(series: pd.Series, mapping: dict) -> pd.Series:
-        if pd.api.types.is_numeric_dtype(series):
-            return series.fillna(0).astype(float)
-        return series.map(mapping).fillna(0).astype(float)
-
-    # 1. Age × Stage — clinical aggressiveness proxy
-    if "Age" in df.columns and "Stage" in df.columns:
-        df["age_stage_risk"] = df["Age"].fillna(0) * _asnum(df["Stage"], _stage_map)
-        new_cols.append("age_stage_risk")
-
-    # 2. BMI × SmokingStatus — comorbidity burden
-    if "BMI" in df.columns and "SmokingStatus" in df.columns:
-        df["bmi_smoking_risk"] = df["BMI"].fillna(0) * _asnum(df["SmokingStatus"], _smoking_map)
-        new_cols.append("bmi_smoking_risk")
-
-    # 3. TumorSize × Stage — tumour aggressiveness
-    tumor_col = next(
-        (c for c in ["TumorSize", "Tumor_Size_cm", "Tumor_Size"] if c in df.columns), None
-    )
-    if tumor_col and "Stage" in df.columns:
-        df["tumor_aggressiveness"] = (
-            df[tumor_col].fillna(0) * _asnum(df["Stage"], _stage_map)
-        )
-        new_cols.append("tumor_aggressiveness")
-
-    # 4. Composite risk score (normalized components, 0–1 each)
-    risk_parts: List[pd.Series] = []
-    if "Stage" in df.columns:
-        risk_parts.append(_asnum(df["Stage"], _stage_map) / 4.0)
-    if "SmokingStatus" in df.columns:
-        risk_parts.append(_asnum(df["SmokingStatus"], _smoking_map) / 2.0)
-    if "FamilyHistory" in df.columns:
-        risk_parts.append(_asnum(df["FamilyHistory"], _family_map))
-    if "Age" in df.columns:
-        age_s = df["Age"].fillna(0).astype(float)
-        mx = age_s.max()
-        risk_parts.append(age_s / mx if mx > 0 else age_s)
-
-    if len(risk_parts) >= 2:
-        df["cumulative_risk_score"] = sum(risk_parts)
-        new_cols.append("cumulative_risk_score")
-
-    # 5. SurvivalMonths normalised — skipped when listed in _LEAKAGE_COLS (prospective leakage risk)
-    surv_col = next(
-        (c for c in ["SurvivalMonths", "Survival_Months"] if c in df.columns), None
-    )
-    if surv_col and surv_col not in _LEAKAGE_COLS:
-        mx = df[surv_col].max()
-        if mx > 0:
-            df["survival_rate_normalized"] = df[surv_col] / mx
-            new_cols.append("survival_rate_normalized")
-
-    return new_cols
+    """Deprecated alias — see ml_framework.domain.medical.add_oncology_features."""
+    from ml_framework.domain.medical.oncology_features import add_oncology_features
+    return add_oncology_features(df, target_col)
 
 
 # =============================================================================
@@ -528,7 +485,8 @@ def engineer_features(
     max_interaction_pairs: int = 30,
     cv_folds: int = 3,
     skip_leakage_cols: bool = True,
-    add_medical: bool = True,
+    domain_features_fn=None,
+    add_medical: bool = False,
     verbose: bool = True,
     random_state: int = 42,
     # legacy parameters — accepted but ignored
@@ -544,7 +502,7 @@ def engineer_features(
     Adaptive feature engineering — functional wrapper.
 
     Calls AdaptiveFeatureEngine.fit_transform() when a target is provided.
-    Falls back to medical features only when target is absent (unsupervised path).
+    Falls back to domain features only when target is absent (unsupervised path).
 
     Parameters
     ----------
@@ -555,7 +513,12 @@ def engineer_features(
     max_interaction_pairs : max candidate pairs evaluated
     cv_folds              : CV folds for probe
     skip_leakage_cols     : skip SurvivalMonths and similar temporal columns
-    add_medical           : always add domain-grounded medical features
+    domain_features_fn    : optional callable(df, target_col) -> List[str] adding
+                             domain-specific features unconditionally (see
+                             AdaptiveFeatureEngine docstring). None (default) =
+                             framework-neutral, no domain features added.
+    add_medical           : deprecated back-compat alias for
+                             domain_features_fn=ml_framework.domain.medical.add_oncology_features
     verbose               : print selection table
     random_state          : reproducibility seed
 
@@ -564,6 +527,10 @@ def engineer_features(
     df_engineered : pd.DataFrame
     new_features  : List[str]
     """
+    if domain_features_fn is None and add_medical:
+        from ml_framework.domain.medical.oncology_features import add_oncology_features
+        domain_features_fn = add_oncology_features
+
     if target_col and target_col in df.columns:
         X = df.drop(columns=[target_col])
         y = df[target_col]
@@ -575,7 +542,7 @@ def engineer_features(
             max_interaction_pairs=max_interaction_pairs,
             cv_folds=cv_folds,
             skip_leakage_cols=skip_leakage_cols,
-            add_medical=add_medical,
+            domain_features_fn=domain_features_fn,
             verbose=verbose,
             random_state=random_state,
         )
@@ -588,9 +555,9 @@ def engineer_features(
 
     else:
         df_eng  = df.copy()
-        new_feats = _add_medical_features(df_eng, target_col)
+        new_feats = domain_features_fn(df_eng, target_col) if domain_features_fn else []
         if verbose:
             print(f"\n  Feature Engineering (no target): "
-                  f"{len(new_feats)} medical features added.")
+                  f"{len(new_feats)} domain feature(s) added.")
 
     return df_eng, new_feats
