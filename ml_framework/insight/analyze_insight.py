@@ -31,7 +31,7 @@ logger = logging.getLogger("ml_framework.insight.analyze_insight")
 def business_insights(
     df: pd.DataFrame,
     target_col: str,
-    domain: str = "medical",
+    domain: str = "general",
     corr_threshold: float = 0.70,
     top_cat_features: int = 20,
     top_num_features: int = 20,
@@ -350,7 +350,7 @@ def generate_pipeline_report(
     lines = [
         "",
         "╔" + "═" * 62 + "╗",
-        "║{:^62}║".format("  SYNTHETIC REPORT OF THE MEDICAL ML PIPELINE  "),
+        "║{:^62}║".format("  SYNTHETIC REPORT OF THE ML PIPELINE  "),
         "╠" + "═" * 62 + "╣",
         "",
         "  ─── DATA ────────────────────────────────────────────────",
