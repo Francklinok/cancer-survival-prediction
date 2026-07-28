@@ -25,7 +25,10 @@ def invoke(ctx: PipelineContext) -> None:
     df = ctx.df_work
     target = ctx.target_column
 
-    df_eng, new_feats = engineer_features(df, target_col=target)
+    df_eng, new_feats = engineer_features(
+        df, target_col=target,
+        domain_features_fn=ctx.config.data.domain_features_fn,
+    )
     ctx.new_features = new_feats
     ctx.artifacts["df_engineered"] = df_eng.copy()
     print(f"  {len(new_feats)} new features created.")

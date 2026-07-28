@@ -2,7 +2,7 @@
 encoding.py —  Categorical variable encoding.
 
 Strategies implemented:
-  - Binary      : Yes/No, Female/Male mappings via map()
+  - Binary      : two-category columns (e.g. Yes/No) mapped to 0/1 via map()
   - Ordinal     : explicit ordered mapping (preserves semantic order) via map()
   - Nominal     : pd.get_dummies(drop_first=True, dtype=int) — no sklearn, no 2D array
   - Target      : category mean encoding (with James-Stein regularization)
@@ -14,6 +14,13 @@ Features:
   - Post-encoding validation (NaN, residual object types)
   - Detailed transformation report
   - Encoder metadata stored for future production inference
+
+encode_dataframe() is domain-neutral by default: with no explicit mappings
+it drops nothing but a generic set of common ID-column names, and encodes
+every categorical column via the automatic get_dummies fallback (step 5).
+Known binary/ordinal mappings for a specific dataset (e.g. this framework's
+original oncology reference dataset) can be supplied explicitly, or loaded
+via ml_framework.domain.medical.get_encoding_mappings() — see that module.
 """
 
 from __future__ import annotations
@@ -28,34 +35,49 @@ logger = logging.getLogger("ml_framework.encoding")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# MAIN ENCODING (cancer dataset)
+# MAIN ENCODING
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 def encode_dataframe(
     df: pd.DataFrame,
     drop_id_cols: Optional[List[str]] = None,
+    binary_mappings: Optional[Dict[str, Dict]] = None,
+    ordinal_mappings: Optional[Dict[str, Dict]] = None,
+    nominal_columns: Optional[List[str]] = None,
     verbose: bool = True,
 ) -> Tuple[pd.DataFrame, Dict]:
     """
-    Complete encoding for the medical cancer dataset.
+    Complete categorical encoding for a DataFrame.
 
     Strategies applied in order:
       1. Drop   : identifier columns removed first (prevents encoding IDs)
-      2. Binary : Yes/No, Female/Male → 0/1 via map()
-      3. Ordinal: explicit ordered map() (preserves semantic order)
-      4. Nominal: pd.get_dummies(drop_first=True, dtype=int) — clean OHE,
-                  no sklearn, no 2D-array assignment issue
-      5. Remaining object columns → pd.get_dummies + logger warning
+      2. Binary : caller-supplied two-category columns → 0/1 via map()
+      3. Ordinal: caller-supplied explicit ordered map() (preserves order)
+      4. Nominal: caller-supplied columns → pd.get_dummies(drop_first=True) —
+                  clean OHE, no sklearn, no 2D-array assignment issue
+      5. Everything else still of object/category dtype → pd.get_dummies
+                  fallback + logger warning (this is what makes the function
+                  work out of the box on a dataset with no mappings supplied)
 
     An ``encoded_cols`` set guarantees each column is processed by exactly one
     strategy; a warning is emitted if a collision is detected.
 
     Parameters
     ----------
-    df           : DataFrame to encode
-    drop_id_cols : additional columns to drop (IDs, etc.)
-    verbose      : print the encoding report
+    df               : DataFrame to encode
+    drop_id_cols     : columns to drop before encoding (IDs, etc.) — merged
+                        with a small generic default (["ID", "index"])
+    binary_mappings  : {column: {category: 0/1, ...}} — e.g.
+                        {"Gender": {"Female": 0, "Male": 1}}. None/{} = skip.
+    ordinal_mappings : {column: {category: rank, ...}}, in semantic order.
+                        None/{} = skip.
+    nominal_columns  : columns to one-hot encode explicitly (columns not
+                        listed here, but still categorical, are still caught
+                        by the step-5 fallback — this list just lets you
+                        control that OHE happens for a known column even if
+                        get_dummies' defaults wouldn't otherwise apply).
+    verbose          : print the encoding report
 
     Returns
     -------
@@ -70,8 +92,12 @@ def encode_dataframe(
     ops_log: List[str] = []
     encoded_cols: set = set()
 
+    binary_mappings = binary_mappings or {}
+    ordinal_mappings = ordinal_mappings or {}
+    nominal_columns = nominal_columns or []
+
     # ── 1. DROP ID COLUMNS ────────────────────────────────────────────────────
-    default_id_cols = ["Patient_ID", "ID", "patient_id", "index"]
+    default_id_cols = ["ID", "index"]
     all_drop = list(set((drop_id_cols or []) + default_id_cols))
     cols_to_drop = [c for c in all_drop if c in df_processed.columns]
     if cols_to_drop:
@@ -79,41 +105,16 @@ def encode_dataframe(
         ops_log.append(f"[Drop]     ID columns removed: {cols_to_drop}")
 
     # ── 2. BINARY COLUMNS ────────────────────────────────────────────────────
-    binary_yes_no = [
-        c for c in ["FamilyHistory", "Recurrence"]
-        if c in df_processed.columns and c not in encoded_cols
-    ]
-    for col in binary_yes_no:
-        df_processed[col] = df_processed[col].map({"Yes": 1, "No": 0})
-        encoders[col] = {"type": "binary", "mapping": {"Yes": 1, "No": 0}}
+    for col, mapping in binary_mappings.items():
+        if col not in df_processed.columns or col in encoded_cols:
+            continue
+        df_processed[col] = df_processed[col].map(mapping)
+        encoders[col] = {"type": "binary", "mapping": mapping}
         encoded_cols.add(col)
-        ops_log.append(f"[Binary]   {col} : Yes→1 / No→0")
-
-    if "Gender" in df_processed.columns and "Gender" not in encoded_cols:
-        mapping = {"Female": 0, "Male": 1}
-        df_processed["Gender"] = df_processed["Gender"].map(mapping)
-        encoders["Gender"] = {"type": "binary", "mapping": mapping}
-        encoded_cols.add("Gender")
-        ops_log.append("[Binary]   Gender : Female→0 / Male→1")
+        mapping_str = " / ".join(f"{k}→{v}" for k, v in mapping.items())
+        ops_log.append(f"[Binary]   {col} : {mapping_str}")
 
     # ── 3. ORDINAL COLUMNS ───────────────────────────────────────────────────
-    ordinal_mappings: Dict[str, Dict] = {
-        "SmokingStatus": {"Non-Smoker": 0, "Former Smoker": 1, "Smoker": 2},
-        "Stage": {"I": 0, "II": 1, "III": 2, "IV": 3},
-        "TreatmentResponse": {
-            "No Response": 0, "Partial Remission": 1, "Complete Remission": 2
-        },
-        "Survival_Category": {
-            "Very_Short": 0, "Short": 1, "Medium": 2, "Long": 3, "Very_Long": 4
-        },
-        "Age_Group": {"Young": 0, "Middle_Age": 1, "Senior": 2, "Elderly": 3},
-        "BMI_Category": {"Underweight": 0, "Normal": 1, "Overweight": 2, "Obese": 3},
-        "Tumor_Size_Category": {"Small": 0, "Medium": 1, "Large": 2},
-        "Cancer_Stage": {"I": 0, "II": 1, "III": 2, "IV": 3},
-        "Physical_Activity": {"Low": 0, "Moderate": 1, "High": 2},
-        "Diet_Risk": {"Low": 0, "Medium": 1, "High": 2},
-    }
-
     for col, mapping in ordinal_mappings.items():
         if col not in df_processed.columns:
             continue
@@ -127,14 +128,18 @@ def encode_dataframe(
 
     # ── 4. NOMINAL COLUMNS → pd.get_dummies ──────────────────────────────────
     nominal_columns = [
-        c for c in [
-            "Race/Ethnicity", "CancerType", "TreatmentType",
-            "HospitalRegion", "Country",
-        ]
+        c for c in nominal_columns
         if c in df_processed.columns and c not in encoded_cols
     ]
 
     for col in nominal_columns:
+        # pd.get_dummies silently zeroes every indicator column for a NaN row
+        # instead of raising or flagging it — indistinguishable downstream
+        # from "matches the dropped reference category". Filling first makes
+        # missingness an explicit, visible category instead.
+        had_na = df_processed[col].isna().any()
+        if had_na:
+            df_processed[col] = df_processed[col].fillna("Missing")
         cols_before = set(df_processed.columns)
         df_processed = pd.get_dummies(
             df_processed, columns=[col], drop_first=True, dtype=int
@@ -146,27 +151,9 @@ def encode_dataframe(
             "new_cols": new_cols,
         }
         encoded_cols.add(col)
+        na_note = " (NaN→'Missing')" if had_na else ""
         ops_log.append(
-            f"[Nominal]  {col} : get_dummies ({len(new_cols)} indicator columns)"
-        )
-
-    # GeneticMarker: nominal with NaN → 'Unknown', then get_dummies
-    if "GeneticMarker" in df_processed.columns and "GeneticMarker" not in encoded_cols:
-        df_processed["GeneticMarker"] = df_processed["GeneticMarker"].fillna("Unknown")
-        cols_before = set(df_processed.columns)
-        df_processed = pd.get_dummies(
-            df_processed, columns=["GeneticMarker"], drop_first=True, dtype=int
-        )
-        new_cols = [c for c in df_processed.columns if c not in cols_before]
-        encoders["GeneticMarker"] = {
-            "type": "ohe_dummies",
-            "original_col": "GeneticMarker",
-            "new_cols": new_cols,
-        }
-        encoded_cols.add("GeneticMarker")
-        ops_log.append(
-            f"[Nominal]  GeneticMarker : get_dummies (NaN→'Unknown', "
-            f"{len(new_cols)} indicator columns)"
+            f"[Nominal]  {col} : get_dummies{na_note} ({len(new_cols)} indicator columns)"
         )
 
     # ── 5. REMAINING OBJECT COLUMNS → pd.get_dummies + warning ───────────────
@@ -176,11 +163,14 @@ def encode_dataframe(
     ]
     for col in remaining_obj:
         logger.warning(
-            "Column '%s' was not in any explicit encoding list — "
+            "Column '%s' was not in any explicit encoding list "
             "applying get_dummies as fallback. "
-            "Consider adding it to binary/ordinal/nominal sections.",
+            "Consider adding it to binary_mappings/ordinal_mappings/nominal_columns.",
             col,
         )
+        had_na = df_processed[col].isna().any()
+        if had_na:
+            df_processed[col] = df_processed[col].fillna("Missing")
         cols_before = set(df_processed.columns)
         df_processed = pd.get_dummies(
             df_processed, columns=[col], drop_first=True, dtype=int
@@ -192,8 +182,9 @@ def encode_dataframe(
             "new_cols": new_cols,
         }
         encoded_cols.add(col)
+        na_note = " (NaN→'Missing')" if had_na else ""
         ops_log.append(
-            f"[Auto]     {col} : get_dummies fallback ({len(new_cols)} indicator columns)"
+            f"[Auto]     {col} : get_dummies fallback{na_note} ({len(new_cols)} indicator columns)"
         )
 
     # ── 6. VALIDATION ─────────────────────────────────────────────────────────
