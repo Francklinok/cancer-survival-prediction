@@ -2,7 +2,7 @@
 pipeline_utils.py — Pipeline utilities (state display, validation, summary).
 
 Helper module for inspecting and displaying the intermediate states
-of the MedicalMLPipeline:
+of the MLPipeline:
   - log_step            : formatted pipeline step header
   - show_state_table    : display a pipeline state element as a table
   - validate_data       : basic dataset validation
