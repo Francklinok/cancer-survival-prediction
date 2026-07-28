@@ -181,18 +181,28 @@ def invoke(ctx: PipelineContext) -> None:
         logger.warning("track_model_performance_over_time: %s", e)
 
     try:
+        is_medical_domain = ctx.config.data.domain_features_fn is not None
+        model_name_suffix = " — Medical Pipeline" if is_medical_domain else ""
+        limitations = (
+            [
+                "Trained on synthetic data — validate on real clinical cohorts.",
+                "SurvivalMonths may constitute leakage in prospective scenarios.",
+            ]
+            if is_medical_domain
+            else [
+                "Validate on held-out, out-of-time, or out-of-distribution data "
+                "before any production use.",
+            ]
+        )
         card = generate_model_card(
             model=model,
             X_train=X_train,
             X_test=X_test,
             y_train=y_train,
             y_test=y_test,
-            model_name=f"{ctx.best_model} — Medical Pipeline",
+            model_name=f"{ctx.best_model}{model_name_suffix}",
             target_description=ctx.target_column,
-            limitations=[
-                "Trained on synthetic data — validate on real clinical cohorts.",
-                "SurvivalMonths may constitute leakage in prospective scenarios.",
-            ],
+            limitations=limitations,
             version="1.0",
         )
         ctx.model_card = card

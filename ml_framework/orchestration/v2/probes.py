@@ -8,8 +8,8 @@ To solve this, this module runs the exact same cheap diagnostic checks up front.
 Its only job is to inform the Decision Engine. It never duplicates or replaces 
 the actual work done later by the modules themselves if they are included.
 
-This logic was previously validated in the Phase 4 preview tests and is now 
-promoted to production code for the MedicalMLPipeline.
+This logic was previously validated in the Phase 4 preview tests and is now
+promoted to production code for the MLPipeline.
 """
 
 from __future__ import annotations

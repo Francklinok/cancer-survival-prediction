@@ -14,7 +14,13 @@ from ml_framework.orchestration.v2.contracts import ModuleSpec
 def invoke(ctx: PipelineContext) -> None:
     from ml_framework.preprocessing.encoding import encode_dataframe
 
-    df_encoded, encoding_report = encode_dataframe(ctx.df_work, verbose=True)
+    df_encoded, encoding_report = encode_dataframe(
+        ctx.df_work,
+        binary_mappings=ctx.config.data.binary_mappings or None,
+        ordinal_mappings=ctx.config.data.ordinal_mappings or None,
+        nominal_columns=ctx.config.data.nominal_columns or None,
+        verbose=True,
+    )
     ctx.df_encoded = df_encoded
     ctx.df_work = df_encoded
     ctx.encoders = encoding_report
