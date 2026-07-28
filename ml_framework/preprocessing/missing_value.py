@@ -287,6 +287,13 @@ def flag_analysis(df: pd.DataFrame, flag: str, target_col: str = "Recurrence") -
 
     Prints the flag's prevalence and the target's distribution split by
     flag value, then plots it via flag_plot().
+
+    Parameters
+    ----------
+    target_col : name of the target column to cross-tabulate the flag
+                 against. The "Recurrence" default is left over from this
+                 framework's original reference notebook — pass your
+                 dataset's actual target explicitly rather than relying on it.
     """
     n_was_missing = df[flag].sum()
     n_total = len(df)
