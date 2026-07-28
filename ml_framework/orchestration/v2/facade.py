@@ -28,10 +28,12 @@ from ml_framework.orchestration.v2.profiling import build_dataset_profile
 logger = logging.getLogger("ml_framework.orchestration.v2.facade")
 
 
-class MedicalMLPipeline:
+class MLPipelineV2:
     """
-    Public facade for the medical MLOps pipeline, backed by the Decision
-    Engine / DAG Builder / Execution Engine stack (v2).
+    Public facade for the MLOps pipeline, backed by the Decision
+    Engine / DAG Builder / Execution Engine stack (v2). Domain-neutral;
+    pass config=FrameworkConfig.from_domain("medical") for the medical/
+    oncology reference dataset — see ml_framework.domain.medical.
 
     Parameters
     ----------
@@ -216,7 +218,13 @@ class MedicalMLPipeline:
         if ctx.encoders:
             try:
                 from ml_framework.preprocessing.encoding import encode_dataframe
-                X_proc, _ = encode_dataframe(X_proc, verbose=False)
+                X_proc, _ = encode_dataframe(
+                    X_proc,
+                    binary_mappings=ctx.config.data.binary_mappings or None,
+                    ordinal_mappings=ctx.config.data.ordinal_mappings or None,
+                    nominal_columns=ctx.config.data.nominal_columns or None,
+                    verbose=False,
+                )
             except Exception as e:
                 logger.warning("predict: encoding failed (%s) — using raw features.", e)
 
@@ -335,3 +343,8 @@ class MedicalMLPipeline:
         if self.context is None:
             raise RuntimeError("Pipeline not yet executed.")
         return self.context
+
+
+# Backward-compatible alias — this class used to be named after the medical
+# use case it was first built for. Prefer MLPipelineV2 in new code.
+MedicalMLPipeline = MLPipelineV2
