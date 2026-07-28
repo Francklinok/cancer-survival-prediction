@@ -5,7 +5,8 @@ pipeline.py - MLOps orchestrator.
   PipelineStep      — abstract base class: each step is a self-contained class
   StepRegistry      — step registry with before/after hooks, retry, skip support
   PipelineRunner    — orchestrates without knowing the business logic of each step
-  MedicalMLPipeline — configures the runner, declares steps, exposes the API
+  MLPipeline        — configures the runner, declares steps, exposes the API
+                       (MedicalMLPipeline is a backward-compatible alias)
 
 Each step:
   - has declared inputs/outputs
@@ -15,13 +16,13 @@ Each step:
 
 Usage
 -----
-    from ml_framework.orchestration.pipeline import MedicalMLPipeline
+    from ml_framework.orchestration.pipeline import MLPipeline
 
-    pipeline = MedicalMLPipeline(config)
-    pipeline.run("data.csv", target_column="TreatmentResponse")
+    pipeline = MLPipeline(config)
+    pipeline.run("data.csv", target_column="target")
 
     # Partial execution
-    pipeline.run("data.csv", target_column="TreatmentResponse",
+    pipeline.run("data.csv", target_column="target",
                  steps=["ingest", "clean", "eda"])
 
     # Predict on new data
@@ -321,7 +322,7 @@ class PipelineRunner:
         _sep2 = "-" * 56
 
         print(f"\n{_sep1}")
-        print("  MEDICAL ML PIPELINE — STARTING")
+        print("  ML PIPELINE — STARTING")
         print(f"  Planned steps: {steps_to_run}")
         print(f"{_sep1}")
 
@@ -690,7 +691,13 @@ class EncodeStep(PipelineStep):
     def run(self, ctx: PipelineContext) -> None:
         from ml_framework.preprocessing.encoding import encode_dataframe
 
-        df_encoded, encoding_report = encode_dataframe(ctx.df_work, verbose=True)
+        df_encoded, encoding_report = encode_dataframe(
+            ctx.df_work,
+            binary_mappings=ctx.config.data.binary_mappings or None,
+            ordinal_mappings=ctx.config.data.ordinal_mappings or None,
+            nominal_columns=ctx.config.data.nominal_columns or None,
+            verbose=True,
+        )
         ctx.df_encoded = df_encoded
         ctx.df_work = df_encoded
         ctx.encoders = encoding_report
@@ -806,7 +813,7 @@ class NormalizeStep(PipelineStep):
 @registry.register
 class FeatureEngineeringStep(PipelineStep):
     """
-    Step 9 — Medical feature engineering + statistical feature selection.
+    Step 9 — Feature engineering (optionally domain-specific) + statistical feature selection.
 
     Input  : ctx.df_work, ctx.target_column, ctx.X_train, ctx.X_test
     Output : ctx.df_work, ctx.final_dataset, ctx.significant_features,
@@ -829,7 +836,10 @@ class FeatureEngineeringStep(PipelineStep):
         target = ctx.target_column
 
         # Engineering
-        df_eng, new_feats = engineer_features(df, target_col=target)
+        df_eng, new_feats = engineer_features(
+            df, target_col=target,
+            domain_features_fn=ctx.config.data.domain_features_fn,
+        )
         ctx.new_features = new_feats
         ctx.artifacts["df_engineered"] = df_eng.copy()
         print(f"  {len(new_feats)} new features created.")
@@ -1163,7 +1173,7 @@ class EvaluateStep(PipelineStep):
         except Exception as e:
             logger.warning("fairness_audit: %s", e)
 
-        # ── Clinical medical report ────────────────────────────────────────────
+        # ── Domain report (medical: clinical model report) ────────────────────
         try:
             clinical_df = medical_model_report(
                 model=model,
@@ -1177,7 +1187,7 @@ class EvaluateStep(PipelineStep):
         except Exception as e:
             logger.warning("medical_model_report: %s", e)
 
-        # ── Clinical decision support (batch) ──────────────────────────────────
+        # ── Domain decision support (medical: batch triage) ────────────────────
         try:
             decision_df = batch_decision_support(
                 model=model,
@@ -1208,19 +1218,29 @@ class EvaluateStep(PipelineStep):
 
         # ── Model Card (Google 2019 standard) ─────────────────────────────────
         try:
+            is_medical_domain = ctx.config.data.domain_features_fn is not None
+            model_name_suffix = " — Medical Pipeline" if is_medical_domain else ""
+            limitations = (
+                [
+                    "Trained on synthetic data — validate on real clinical cohorts.",
+                    "SurvivalMonths may constitute leakage in prospective scenarios.",
+                    "Not cleared for independent clinical deployment.",
+                ]
+                if is_medical_domain
+                else [
+                    "Validate on held-out, out-of-time, or out-of-distribution data "
+                    "before any production use.",
+                ]
+            )
             card = generate_model_card(
                 model=model,
                 X_train=X_train,
                 X_test=X_test,
                 y_train=y_train,
                 y_test=y_test,
-                model_name=f"{ctx.best_model} — Medical Pipeline",
+                model_name=f"{ctx.best_model}{model_name_suffix}",
                 target_description=ctx.target_column,
-                limitations=[
-                    "Trained on synthetic data — validate on real clinical cohorts.",
-                    "SurvivalMonths may constitute leakage in prospective scenarios.",
-                    "Not cleared for independent clinical deployment.",
-                ],
+                limitations=limitations,
                 version="1.0",
             )
             ctx.model_card = card
@@ -1296,28 +1316,31 @@ class PersistStep(PipelineStep):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 6. MEDICAL ML PIPELINE — public facade
+# 6. ML PIPELINE — public facade
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-class MedicalMLPipeline:
+class MLPipeline:
     """
-    Public facade for the medical MLOps pipeline.
+    Public facade for the MLOps pipeline. Domain-neutral: works on any
+    tabular dataset. For the medical/oncology reference dataset this
+    framework was originally built against, pass
+    config=FrameworkConfig.from_domain("medical") — see ml_framework.domain.medical.
 
     Configures the PipelineRunner with the step registry,
     exposes a simple API, and retains the context after execution.
 
     Parameters
     ----------
-    config    : FrameworkConfig — global configuration (default: standard values)
+    config    : FrameworkConfig — global configuration (default: domain-neutral)
     n_retries : number of automatic retries per step on error (default 0)
 
     Usage
     -----
-        pipeline = MedicalMLPipeline()
-        pipeline.run("data.csv", target_column="TreatmentResponse")
+        pipeline = MLPipeline()
+        pipeline.run("data.csv", target_column="target")
 
-        # Predict on new patients
+        # Predict on new rows
         predictions = pipeline.predict(new_df)
 
         # Access results
@@ -1344,7 +1367,7 @@ class MedicalMLPipeline:
             stop_on_error=True,
         )
         self.context: Optional[PipelineContext] = None
-        logger.info("MedicalMLPipeline initialized.")
+        logger.info("MLPipeline initialized.")
 
     def run(
         self,
@@ -1424,7 +1447,13 @@ class MedicalMLPipeline:
         if ctx.encoders:
             try:
                 from ml_framework.preprocessing.encoding import encode_dataframe
-                X_proc, _ = encode_dataframe(X_proc, verbose=False)
+                X_proc, _ = encode_dataframe(
+                    X_proc,
+                    binary_mappings=ctx.config.data.binary_mappings or None,
+                    ordinal_mappings=ctx.config.data.ordinal_mappings or None,
+                    nominal_columns=ctx.config.data.nominal_columns or None,
+                    verbose=False,
+                )
             except Exception as e:
                 logger.warning("predict: encoding failed (%s) — using raw features.", e)
 
@@ -1500,3 +1529,8 @@ class MedicalMLPipeline:
         if self.context is None:
             raise RuntimeError("Pipeline not yet executed.")
         return self.context
+
+
+# Backward-compatible alias — the class used to be named after the medical
+# use case it was first built for. Prefer MLPipeline in new code.
+MedicalMLPipeline = MLPipeline

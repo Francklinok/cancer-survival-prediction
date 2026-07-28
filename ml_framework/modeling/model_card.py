@@ -50,10 +50,10 @@ def generate_model_card(
     X_test: pd.DataFrame,
     y_train: pd.Series,
     y_test: pd.Series,
-    model_name: str = "Medical Model",
-    target_description: str = "Treatment response",
-    intended_use: str = "Clinical decision support",
-    out_of_scope: str = "Do not use for definitive diagnosis",
+    model_name: str = "ML Model",
+    target_description: str = "target variable",
+    intended_use: str = "Decision support",
+    out_of_scope: str = "Do not use as the sole basis for high-stakes decisions",
     limitations: Optional[List[str]] = None,
     sensitive_attrs: Optional[List[str]] = None,
     version: str = "1.0",
@@ -163,7 +163,7 @@ def generate_model_card(
         },
         "intended_use": {
             "primary_use":   intended_use,
-            "primary_users": "Clinicians, medical data scientists",
+            "primary_users": "Domain experts and data scientists",
             "out_of_scope":  out_of_scope,
         },
         "data_summary": {
@@ -182,9 +182,9 @@ def generate_model_card(
         "limitations":  limitations,
         "ethical_considerations": {
             "sensitive_attributes": sensitive_attrs or [],
-            "fairness_note":        "Fairness audit required before any clinical deployment.",
+            "fairness_note":        "Fairness audit required before any high-stakes deployment.",
             "bias_warning":         "Biases in training data propagate to model predictions.",
-            "gdpr_note":            "Medical data processing — GDPR compliance required.",
+            "privacy_note":         "Verify applicable data protection requirements (e.g. GDPR) for this dataset before deployment.",
         },
         "usage_guidelines": {
             "recommended_threshold": 0.5,

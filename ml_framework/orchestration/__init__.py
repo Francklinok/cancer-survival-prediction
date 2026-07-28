@@ -2,6 +2,7 @@
 
 from ml_framework.orchestration.normalization_pipeline import run_normalization_pipeline
 from ml_framework.orchestration.pipeline import (
+    MLPipeline,
     MedicalMLPipeline,
     PipelineContext,
     PipelineStep,
@@ -14,6 +15,7 @@ __all__ = [
     # Normalization sub-pipeline
     "run_normalization_pipeline",
     # Step-based MLOps pipeline
+    "MLPipeline",
     "MedicalMLPipeline",
     "PipelineContext",
     "PipelineStep",

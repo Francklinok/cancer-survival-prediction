@@ -38,7 +38,7 @@ Structure
 Usage
 -----
     from ml_framework.analysis.statistical_analysis import run_statistical_analysis
-    stats_report = run_statistical_analysis(df, target_col="TreatmentResponse")
+    stats_report = run_statistical_analysis(df, target_col="Recurrence")
 
     # Or individual analyses:
     from ml_framework.analysis.statistical_analysis import (
